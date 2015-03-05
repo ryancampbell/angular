@@ -2,6 +2,7 @@ import {ListWrapper, MapWrapper} from 'angular2/src/facade/collection';
 import {reflector} from 'angular2/src/reflection/reflection';
 import {isPresent, isJsObject} from 'angular2/src/facade/lang';
 import {getIntParameter, bindAction} from 'angular2/src/test_lib/benchmark_util';
+import {BrowserDomAdapter} from 'angular2/src/dom/browser_adapter';
 
 import {
   Lexer,
@@ -103,7 +104,7 @@ function setUpChangeDetection(changeDetection:ChangeDetection, iterations) {
   var parser = new Parser(new Lexer());
 
   var parentProto = changeDetection.createProtoChangeDetector('parent');
-  var parentCd = parentProto.instantiate(dispatcher, MapWrapper.create());
+  var parentCd = parentProto.instantiate(dispatcher);
 
   var proto = changeDetection.createProtoChangeDetector("proto");
   var astWithSource = [
@@ -119,7 +120,7 @@ function setUpChangeDetection(changeDetection:ChangeDetection, iterations) {
     parser.parseBinding('field9', null)
   ];
   for (var j = 0; j < 10; ++j) {
-    proto.addAst(astWithSource[j].ast, "memo", j, false);
+    proto.addAst(astWithSource[j].ast, "memo", j);
   }
 
   for (var i = 0; i < iterations; ++i) {
@@ -127,18 +128,19 @@ function setUpChangeDetection(changeDetection:ChangeDetection, iterations) {
     for (var j = 0; j < 10; ++j) {
       obj.setField(j, i);
     }
-    var cd = proto.instantiate(dispatcher,  null);
-    cd.setContext(obj);
+    var cd = proto.instantiate(dispatcher);
+    cd.hydrate(obj);
     parentCd.addChild(cd);
   }
   return parentCd;
 }
 
 export function main () {
+  BrowserDomAdapter.makeCurrent();
   var numberOfChecks = getIntParameter('numberOfChecks');
+  var numberOfRuns = getIntParameter('iterations');
 
   var numberOfChecksPerDetector = 10;
-  var numberOfRuns = 20;
   var numberOfDetectors = numberOfChecks / numberOfChecksPerDetector / numberOfRuns;
 
   setUpReflector();

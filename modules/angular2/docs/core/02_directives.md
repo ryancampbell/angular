@@ -68,7 +68,7 @@ Here is a trivial example of a tooltip decorator. The directive will log a toolt
 @Decorator({
   selector: '[tooltip]', // CSS Selector which triggers the decorator
   bind: {                // List which properties need to be bound
-    tooltip: 'text'      //  - DOM element tooltip property should be 
+    text: 'tooltip'      //  - DOM element tooltip property should be 
   },                     //    mapped to the directive text property.
   event: {               // List which events need to be mapped.
     mouseover: 'show'    //  - Invoke the show() method every time 
@@ -114,7 +114,7 @@ Example of a component:
   selector: 'pane',               | CSS selector on <pane> element
   bind: {                         | List which property need to be bound
     'title': 'title',             |  - title mapped to component title
-    'open': 'open'                |  - open mapped to component title
+    'open': 'open'                |  - open attribute mapped to component's open property
   },                              |
 })                                |
 @Template({                       | Template annotation
@@ -154,7 +154,7 @@ class Pane {                      | Component controller class
 
 Example of usage:
 ```
-<pane #pane title="Example Title">
+<pane #pane title="Example Title" open="true">
   Some text to wrap.
 </pane>
 <button (click)="pane.toggle()">toggle</button>
@@ -180,7 +180,7 @@ Viewport is a directive which can control instantiation of child views which are
 @Viewport({
   selector: '[if]',
   bind: {
-    'if': 'condition'
+    'condition': 'if'
   }
 })
 export class If {

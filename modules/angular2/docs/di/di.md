@@ -96,12 +96,12 @@ var car = child.get(Car); // uses the Car binding from the parent injector and E
 
 ## Bindings
 
-You can bind to a class, a value, or a factory
+You can bind to a class, a value, or a factory. It is also possible to alias existing bindings.
 
 ```
 var inj = new Injector([
-	bind(Car).toClass(Car)
-	bind(Engine).toClass(Engine);
+	bind(Car).toClass(Car),
+	bind(Engine).toClass(Engine)
 ]);
 
 var inj = new Injector([
@@ -124,9 +124,19 @@ You can bind any token.
 ```
 var inj = new Injector([
 	bind(Car).toFactory((e) => new Car(), ["engine!"]),
-	bind("engine!").toClass(Engine);
+	bind("engine!").toClass(Engine)
 ]);
 ```
+
+If you want to alias an existing binding, you can do so using `toAlias`:
+
+```
+var inj = new Injector([
+	bind(Engine).toClass(Engine),
+	bind("engine!").toAlias(Engine)
+]);
+```
+which implies `inj.get(Engine) === inj.get("engine!")`.
 
 Note that tokens and factory functions are decoupled.
 
@@ -281,7 +291,9 @@ class UserController {
 }
 
 var inj = new Injector([UserList, UserController]);
-var ctrl:UserController = inj.get(UserController); //ctr.ul instanceof Promise;
+var ctrl:UserController = inj.get(UserController);
+// UserController responsible for dealing with asynchrony.
+expect(ctrl.ul).toBePromise();
 ```
 
 #### Async Binding + Sync Dependency:
@@ -298,7 +310,14 @@ var inj = new Injector([
 	bind(UserList).toAsyncFactory(() => fetchUsersUsingHttp().then((u) => new UserList(u))),
 	UserController
 ]);
-var ctrl:Promise = inj.asyncGet(UserController); //ctr.ul instanceof UserList;
+var ctrlPromise:Promise = inj.asyncGet(UserController);
+// Caller opts in to dealing with asynchrony.
+ctrlPromise.then((ctrl) {
+	expect(ctrl).toBeAnInstanceOf(UserController);
+	expect(ctrl.ul).toBeAnInstanceOf(UserList);
+});
+// No synchronous provider for UserList, results in a NoProviderError.
+expect(() => inj.get(UserController)).toThrow(new NoProviderError(...));
 ```
 
 
@@ -316,7 +335,15 @@ var inj = new Injector([
 	bind(UserList).toAsyncFactory(() => fetchUsersUsingHttp().then((u) => new UserList(u))),
 	UserController
 ]);
-var ctrl = inj.get(UserController); //ctr.ul instanceof UserList;
+var ctrl = inj.get(UserController);
+// UserController responsible for dealing with asynchrony.
+expect(ctrl.ul).toBePromise();
+
+var ctrlPromise = inj.asyncGet(UserController);
+ctrlPromise.then((ctrl) {
+  // UserList still provided async.
+  expect(ctrl.ul).toBePromise();
+});
 ```
 
 
@@ -350,10 +377,13 @@ Or we can register a factory function:
 
 ```
 var inj = new Injector([
-  bind('MyClassFactory').toFactory(dep => () => new MyClass(dep), [SomeDependency]);
+  bind('MyClassFactory').toFactory(dep => () => new MyClass(dep), [SomeDependency])
 ]);
 
-var inj.get('MyClassFactory')();
+var factory = inj.get('MyClassFactory');
+var instance1 = factory(), instance2 = factory();
+// Depends on the implementation of MyClass, but generally holds.
+expect(instance1).not.toBe(instance2);
 ```
 
 
@@ -364,7 +394,7 @@ Most of the time we do not have to deal with keys.
 
 ```
 var inj = new Injector([
-  bind(Engine).toFactory(() => new TurboEngine()); //the passed in token Engine gets mapped to a key
+  bind(Engine).toFactory(() => new TurboEngine())  //the passed in token Engine gets mapped to a key
 ]);
 var engine = inj.get(Engine); //the passed in token Engine gets mapped to a key
 ```
@@ -375,7 +405,7 @@ Now, the same example, but with keys
 var ENGINE_KEY = Key.get(Engine);
 
 var inj = new Injector([
-  bind(ENGINE_KEY).toFactory(() => new TurboEngine()); // no mapping
+  bind(ENGINE_KEY).toFactory(() => new TurboEngine()) // no mapping
 ]);
 var engine = inj.get(ENGINE_KEY);  // no mapping
 ```

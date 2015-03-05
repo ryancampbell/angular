@@ -1,4 +1,4 @@
-var perfUtil = require('angular2/e2e_test/perf_util');
+var perfUtil = require('angular2/src/test_lib/perf_util');
 
 describe('ng-dart1.x naive infinite scroll benchmark', function () {
 
@@ -13,10 +13,8 @@ describe('ng-dart1.x naive infinite scroll benchmark', function () {
         url: URL,
         id: 'ng1-dart1.x.naive_infinite_scroll',
         work: function() {
-          browser.executeScript(
-              'document.querySelector("scroll-app /deep/ #reset-btn").click()');
-          browser.executeScript(
-              'document.querySelector("scroll-app /deep/ #run-btn").click()');
+          $('#reset-btn').click();
+          $('#run-btn').click();
           var s = 1000;
           if (appSize > 4) {
             s = s + appSize * 100;

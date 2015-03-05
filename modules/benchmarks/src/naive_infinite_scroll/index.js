@@ -1,9 +1,10 @@
 import {int, isBlank} from 'angular2/src/facade/lang';
-import {Element} from 'angular2/src/facade/dom';
+import {DOM} from 'angular2/src/dom/dom_adapter';
 import {MapWrapper} from 'angular2/src/facade/collection';
 
 import {Parser, Lexer, ChangeDetector, ChangeDetection}
     from 'angular2/change_detection';
+import {ExceptionHandler} from 'angular2/src/core/exception_handler';
 import {
   bootstrap, Component, Viewport, Template, ViewContainer, Compiler, onChange
 }  from 'angular2/angular2';
@@ -16,6 +17,11 @@ import {TemplateResolver} from 'angular2/src/core/compiler/template_resolver';
 import {LifeCycle} from 'angular2/src/core/life_cycle/life_cycle';
 import {XHR} from 'angular2/src/core/compiler/xhr/xhr';
 import {XHRImpl} from 'angular2/src/core/compiler/xhr/xhr_impl';
+import {UrlResolver} from 'angular2/src/core/compiler/url_resolver';
+import {StyleUrlResolver} from 'angular2/src/core/compiler/style_url_resolver';
+import {ComponentUrlMapper} from 'angular2/src/core/compiler/component_url_mapper';
+import {StyleInliner} from 'angular2/src/core/compiler/style_inliner';
+import {CssProcessor} from 'angular2/src/core/compiler/css_processor';
 
 import {If, Foreach} from 'angular2/directives';
 import {App, setupReflectorForApp} from './app';
@@ -157,7 +163,7 @@ export function setupReflectorForAngular() {
     'annotations' : [new Viewport({
       selector: '[if]',
       bind: {
-        'if': 'condition'
+        'condition': 'if'
       }
     })]
   });
@@ -168,18 +174,19 @@ export function setupReflectorForAngular() {
     'annotations' : [new Viewport({
       selector: '[foreach]',
       bind: {
-        'in': 'iterableChanges[]'
+        'iterableChanges': 'in | iterableDiff'
       }
     })]
   });
 
   reflector.registerType(Compiler, {
     "factory": (changeDetection, templateLoader, reader, parser, compilerCache, shadowDomStrategy,
-      resolver) =>
+      tplResolver, cmpUrlMapper, urlResolver, cssProcessor) =>
       new Compiler(changeDetection, templateLoader, reader, parser, compilerCache, shadowDomStrategy,
-        resolver),
+        tplResolver, cmpUrlMapper, urlResolver, cssProcessor),
     "parameters": [[ChangeDetection], [TemplateLoader], [DirectiveMetadataReader], [Parser],
-                   [CompilerCache], [ShadowDomStrategy], [TemplateResolver]],
+                   [CompilerCache], [ShadowDomStrategy], [TemplateResolver], [ComponentUrlMapper],
+                   [UrlResolver], [CssProcessor]],
     "annotations": []
   });
 
@@ -196,8 +203,8 @@ export function setupReflectorForAngular() {
   });
 
   reflector.registerType(TemplateLoader, {
-    "factory": (xhr) => new TemplateLoader(xhr),
-    "parameters": [[XHR]],
+    "factory": (xhr, urlResolver) => new TemplateLoader(xhr, urlResolver),
+    "parameters": [[XHR], [UrlResolver]],
     "annotations": []
   });
 
@@ -225,16 +232,58 @@ export function setupReflectorForAngular() {
     'annotations': []
   });
 
-  reflector.registerType(LifeCycle, {
-    "factory": (cd) => new LifeCycle(cd),
-    "parameters": [[ChangeDetector]],
-    "annotations": []
-  });
-
-  reflector.registerType(ShadowDomStrategy, {
-    "factory": () => new NativeShadowDomStrategy(),
+  reflector.registerType(ExceptionHandler, {
+    "factory": () => new ExceptionHandler(),
     "parameters": [],
     "annotations": []
   });
 
+  reflector.registerType(LifeCycle, {
+    "factory": (exHandler, cd) => new LifeCycle(exHandler, cd),
+    "parameters": [[ExceptionHandler], [ChangeDetector]],
+    "annotations": []
+  });
+
+  reflector.registerType(ShadowDomStrategy, {
+    "factory": (strategy) => strategy,
+    "parameters": [[NativeShadowDomStrategy]],
+    "annotations": []
+  });
+
+  reflector.registerType(NativeShadowDomStrategy, {
+    "factory": (styleUrlResolver) => new NativeShadowDomStrategy(styleUrlResolver),
+    "parameters": [[StyleUrlResolver]],
+    "annotations": []
+  });
+
+  reflector.registerType(StyleUrlResolver, {
+    "factory": (urlResolver) => new StyleUrlResolver(urlResolver),
+    "parameters": [[UrlResolver]],
+    "annotations": []
+  });
+
+  reflector.registerType(UrlResolver, {
+    "factory": () => new UrlResolver(),
+    "parameters": [],
+    "annotations": []
+  });
+
+  reflector.registerType(ComponentUrlMapper, {
+    "factory": () => new ComponentUrlMapper(),
+    "parameters": [],
+    "annotations": []
+  });
+
+  reflector.registerType(StyleInliner, {
+    "factory": (xhr, styleUrlResolver, urlResolver) =>
+      new StyleInliner(xhr, styleUrlResolver, urlResolver),
+    "parameters": [[XHR], [StyleUrlResolver], [UrlResolver]],
+    "annotations": []
+  });
+
+  reflector.registerType(CssProcessor, {
+    "factory": () => new CssProcessor(null),
+    "parameters": [],
+    "annotations": []
+  });
 }

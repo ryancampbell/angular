@@ -1,6 +1,6 @@
 import {isPresent} from 'angular2/src/facade/lang';
 import {List, ListWrapper} from 'angular2/src/facade/collection';
-import {Element, Node, DOM} from 'angular2/src/facade/dom';
+import {DOM} from 'angular2/src/dom/dom_adapter';
 import {CompileElement} from './compile_element';
 import {CompileControl} from './compile_control';
 import {CompileStep} from './compile_step';
@@ -15,23 +15,23 @@ export class CompilePipeline {
     this._control = new CompileControl(steps);
   }
 
-  process(rootElement:Element):List {
+  process(rootElement, compilationCtxtDescription:string = ''):List {
     var results = ListWrapper.create();
-    this._process(results, null, new CompileElement(rootElement));
+    this._process(results, null, new CompileElement(rootElement, compilationCtxtDescription), compilationCtxtDescription);
     return results;
   }
 
-  _process(results, parent:CompileElement, current:CompileElement) {
+  _process(results, parent:CompileElement, current:CompileElement, compilationCtxtDescription:string = '') {
     var additionalChildren = this._control.internalProcess(results, 0, parent, current);
 
     if (current.compileChildren) {
-      var node = DOM.templateAwareRoot(current.element).firstChild;
+      var node = DOM.firstChild(DOM.templateAwareRoot(current.element));
       while (isPresent(node)) {
         // compiliation can potentially move the node, so we need to store the
         // next sibling before recursing.
         var nextNode = DOM.nextSibling(node);
-        if (node.nodeType === Node.ELEMENT_NODE) {
-          this._process(results, current, new CompileElement(node));
+        if (DOM.isElementNode(node)) {
+          this._process(results, current, new CompileElement(node, compilationCtxtDescription));
         }
         node = nextNode;
       }

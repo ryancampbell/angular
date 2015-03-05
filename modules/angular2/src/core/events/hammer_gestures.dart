@@ -2,7 +2,6 @@ library angular.events;
 
 import 'dart:html';
 import './hammer_common.dart';
-import '../../facade/dom.dart' show Element;
 import '../../facade/lang.dart' show BaseException;
 
 import 'dart:js' as js;
@@ -18,7 +17,8 @@ class HammerGesturesPlugin extends HammerGesturesPluginCommon {
     return true;
   }
 
-  addEventListener(Element element, String eventName, Function handler) {
+  addEventListener(Element element, String eventName, Function handler, bool shouldSupportBubble) {
+    if (shouldSupportBubble) throw new BaseException('Hammer.js plugin does not support bubbling gestures.');
     var zone = this.manager.getZone();
     eventName = eventName.toLowerCase();
 

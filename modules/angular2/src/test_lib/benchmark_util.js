@@ -1,5 +1,8 @@
-import {DOM, document, location} from 'angular2/src/facade/dom';
+import {BrowserDomAdapter} from 'angular2/src/dom/browser_adapter';
+import {document} from 'angular2/src/facade/browser';
 import {NumberWrapper, BaseException, isBlank} from 'angular2/src/facade/lang';
+
+var DOM = new BrowserDomAdapter();
 
 export function getIntParameter(name:string) {
   return NumberWrapper.parseInt(getStringParameter(name), 10);
@@ -12,8 +15,9 @@ export function getStringParameter(name:string) {
 
   for (var i=0; i<els.length; i++) {
     el = els[i];
-    if ((el.type !== 'radio' && el.type !== 'checkbox') || el.checked) {
-      value = el.value;
+    var type = DOM.type(el);
+    if ((type !== 'radio' && type !== 'checkbox') || DOM.getChecked(el)) {
+      value = DOM.getValue(el);
       break;
     }
   }

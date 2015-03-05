@@ -1,4 +1,4 @@
-var perfUtil = require('angular2/e2e_test/perf_util');
+var perfUtil = require('angular2/src/test_lib/perf_util');
 
 describe('ng2 change detection benchmark', function () {
 
@@ -12,8 +12,9 @@ describe('ng2 change detection benchmark', function () {
       buttons: ['#ng2ChangeDetectionDynamic'],
       id: 'ng2.changeDetection.dynamic',
       params: [{
-        name: 'numberOfChecks', value: 900000, scale: 'linear'
-      }]
+        name: 'numberOfChecks', value: 900000
+      }],
+      microIterations: 20
     }).then(done, done.fail);
   });
 
@@ -23,8 +24,9 @@ describe('ng2 change detection benchmark', function () {
       buttons: ['#ng2ChangeDetectionJit'],
       id: 'ng2.changeDetection.jit',
       params: [{
-        name: 'numberOfChecks', value: 900000, scale: 'linear'
-      }]
+        name: 'numberOfChecks', value: 900000
+      }],
+      microIterations: 20
     }).then(done, done.fail);
   });
 
@@ -34,8 +36,9 @@ describe('ng2 change detection benchmark', function () {
       buttons: ['#baselineChangeDetection'],
       id: 'baseline.changeDetection',
       params: [{
-        name: 'numberOfChecks', value: 900000, scale: 'linear'
-      }]
+        name: 'numberOfChecks', value: 900000
+      }],
+      microIterations: 20
     }).then(done, done.fail);
   });
 

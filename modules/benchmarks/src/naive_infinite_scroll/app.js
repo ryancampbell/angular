@@ -7,7 +7,8 @@ import {PromiseWrapper} from 'angular2/src/facade/async';
 import {ListWrapper} from 'angular2/src/facade/collection';
 import {ScrollAreaComponent} from './scroll_area';
 import {If, Foreach} from 'angular2/directives';
-import {DOM, document, Element} from 'angular2/src/facade/dom';
+import {DOM} from 'angular2/src/dom/dom_adapter';
+import {document} from 'angular2/src/facade/browser';
 
 export class App {
   scrollAreas:List<int>;
@@ -23,11 +24,10 @@ export class App {
     for (var i = 0; i < appSize; i++) {
       ListWrapper.push(this.scrollAreas, i);
     }
-    // TODO(tbosch): change to bindAction when it works in pub serve
-    DOM.on(DOM.query('scroll-app /deep/ #run-btn'), 'click', (_) => {
+    bindAction('#run-btn', () => {
       this.runBenchmark();
     });
-    DOM.on(DOM.query('scroll-app /deep/ #reset-btn'), 'click', (_) => {
+    bindAction('#reset-btn', () => {
       this._getScrollDiv().scrollTop = 0;
       var existingMarker = this._locateFinishedMarker();
       if (isPresent(existingMarker)) {
@@ -69,7 +69,7 @@ export class App {
     }, 0);
   }
 
-  _locateFinishedMarker():Element {
+  _locateFinishedMarker() {
     return DOM.querySelector(document.body, '#done');
   }
 
@@ -90,10 +90,6 @@ export function setupReflectorForApp() {
           <div>
             <div style="display: flex">
               <scroll-area id="testArea"></scroll-area>
-              <div style="padding-left: 20px">
-                <button id="run-btn">Run</button>
-                <button id="reset-btn">Reset</button>
-              </div>
             </div>
             <div template="if scrollAreas.length > 0">
               <p>Following tables are only here to add weight to the UI:</p>

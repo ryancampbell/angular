@@ -1,12 +1,9 @@
 import {describe, it, expect, beforeEach, ddescribe, iit, xit, el} from 'angular2/test_lib';
-
 import {TemplateLoader} from 'angular2/src/core/compiler/template_loader';
+import {UrlResolver} from 'angular2/src/core/compiler/url_resolver';
 
 import {Template} from 'angular2/src/core/annotations/template';
-
 import {PromiseWrapper} from 'angular2/src/facade/async';
-import {Type, stringify, isPresent} from 'angular2/src/facade/lang';
-
 import {XHRMock} from 'angular2/src/mock/xhr_mock';
 
 export function main() {
@@ -15,7 +12,7 @@ export function main() {
 
     beforeEach(() => {
       xhr = new XHRMock()
-      loader = new TemplateLoader(xhr);
+      loader = new TemplateLoader(xhr, new FakeUrlResolver());
     });
 
     it('should load inline templates synchronously', () => {
@@ -24,8 +21,9 @@ export function main() {
     });
 
     it('should load templates through XHR', (done) => {
-      xhr.expect('/foo', 'xhr template');
+      xhr.expect('base/foo', 'xhr template');
       var template = new Template({url: '/foo'});
+      loader.setBaseUrl(template, 'base');
       loader.load(template).then((el) => {
         expect(el.content).toHaveText('xhr template');
         done();
@@ -35,8 +33,9 @@ export function main() {
 
     it('should cache template loaded through XHR', (done) => {
       var firstEl;
-      xhr.expect('/foo', 'xhr template');
+      xhr.expect('base/foo', 'xhr template');
       var template = new Template({url: '/foo'});
+      loader.setBaseUrl(template, 'base');
       loader.load(template)
         .then((el) => {
           firstEl = el;
@@ -57,12 +56,13 @@ export function main() {
     });
 
     it('should return a rejected Promise when xhr loading fails', (done) => {
-      xhr.expect('/foo', null);
+      xhr.expect('base/foo', null);
       var template = new Template({url: '/foo'});
+      loader.setBaseUrl(template, 'base');
       PromiseWrapper.then(loader.load(template),
         function(_) { throw 'Unexpected response'; },
         function(error) {
-          expect(error).toEqual('Failed to load /foo');
+          expect(error).toEqual('Failed to load base/foo');
           done();
         }
       )
@@ -73,4 +73,14 @@ export function main() {
 }
 
 class SomeComponent {
+}
+
+class FakeUrlResolver extends UrlResolver {
+  constructor() {
+    super();
+  }
+
+  resolve(baseUrl: string, url: string): string {
+    return baseUrl + url;
+  }
 }

@@ -4,7 +4,7 @@ import { ListWrapper } from 'angular2/src/facade/collection';
 
 import {
   Validator, RegressionSlopeValidator, Injector, bind, MeasureValues
-} from 'benchpress/benchpress';
+} from 'benchpress/common';
 
 export function main() {
   describe('regression slope validator', () => {
@@ -15,7 +15,7 @@ export function main() {
         RegressionSlopeValidator.BINDINGS,
         bind(RegressionSlopeValidator.METRIC).toValue(metric),
         bind(RegressionSlopeValidator.SAMPLE_SIZE).toValue(size)
-      ]).get(Validator);
+      ]).get(RegressionSlopeValidator);
     }
 
     it('should return sampleSize and metric as description', () => {

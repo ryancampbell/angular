@@ -14,11 +14,9 @@ import {
   RECORD_TYPE_INVOKE_CLOSURE,
   RECORD_TYPE_PRIMITIVE_OP,
   RECORD_TYPE_KEYED_ACCESS,
-  RECORD_TYPE_INVOKE_FORMATTER,
-  RECORD_TYPE_STRUCTURAL_CHECK,
-  RECORD_TYPE_INTERPOLATE,
-  ProtoChangeDetector
-  } from './proto_change_detector';
+  RECORD_TYPE_PIPE,
+  RECORD_TYPE_INTERPOLATE
+  } from './proto_record';
 
 /**
  * The code generator takes a list of proto records and creates a function/class
@@ -27,15 +25,14 @@ import {
  *
  * For example: An expression `address.city` will result in the following class:
  *
- * var ChangeDetector0 = function ChangeDetector0(dispatcher, formatters, protos) {
+ * var ChangeDetector0 = function ChangeDetector0(dispatcher, protos) {
  *   AbstractChangeDetector.call(this);
  *   this.dispatcher = dispatcher;
- *   this.formatters = formatters;
  *   this.protos = protos;
  *
- *   this.context = null;
- *   this.address0 = null;
- *   this.city1 = null;
+ *   this.context = ChangeDetectionUtil.unitialized();
+ *   this.address0 = ChangeDetectionUtil.unitialized();
+ *   this.city1 = ChangeDetectionUtil.unitialized();
  * }
  * ChangeDetector0.prototype = Object.create(AbstractChangeDetector.prototype);
  *
@@ -73,8 +70,18 @@ import {
  * }
  *
  *
- * ChangeDetector0.prototype.setContext = function(context) {
+ * ChangeDetector0.prototype.hydrate = function(context) {
  *   this.context = context;
+ * }
+ *
+ * ChangeDetector0.prototype.dehydrate = function(context) {
+ *   this.context = ChangeDetectionUtil.unitialized();
+ *   this.address0 = ChangeDetectionUtil.unitialized();
+ *   this.city1 = ChangeDetectionUtil.unitialized();
+ * }
+ *
+ * ChangeDetector0.prototype.hydrated = function() {
+ *   return this.context !== ChangeDetectionUtil.unitialized();
  * }
  *
  * return ChangeDetector0;
@@ -90,12 +97,11 @@ import {
 var ABSTRACT_CHANGE_DETECTOR = "AbstractChangeDetector";
 var UTIL = "ChangeDetectionUtil";
 var DISPATCHER_ACCESSOR = "this.dispatcher";
-var FORMATTERS_ACCESSOR = "this.formatters";
+var PIPE_REGISTRY_ACCESSOR = "this.pipeRegistry";
 var PROTOS_ACCESSOR = "this.protos";
 var CHANGE_LOCAL = "change";
 var CHANGES_LOCAL = "changes";
 var TEMP_LOCAL = "temp";
-var PIPE_REGISTRY_ACCESSOR = "this.pipeRegistry";
 
 function typeTemplate(type:string, cons:string, detectChanges:string, setContext:string):string {
   return `
@@ -103,18 +109,17 @@ ${cons}
 ${detectChanges}
 ${setContext};
 
-return function(dispatcher, formatters, pipeRegistry) {
-  return new ${type}(dispatcher, formatters, pipeRegistry, protos);
+return function(dispatcher, pipeRegistry) {
+  return new ${type}(dispatcher, pipeRegistry, protos);
 }
 `;
 }
 
 function constructorTemplate(type:string, fieldsDefinitions:string):string {
   return `
-var ${type} = function ${type}(dispatcher, formatters, pipeRegistry, protos) {
+var ${type} = function ${type}(dispatcher, pipeRegistry, protos) {
 ${ABSTRACT_CHANGE_DETECTOR}.call(this);
 ${DISPATCHER_ACCESSOR} = dispatcher;
-${FORMATTERS_ACCESSOR} = formatters;
 ${PIPE_REGISTRY_ACCESSOR} = pipeRegistry;
 ${PROTOS_ACCESSOR} = protos;
 ${fieldsDefinitions}
@@ -124,10 +129,21 @@ ${type}.prototype = Object.create(${ABSTRACT_CHANGE_DETECTOR}.prototype);
 `;
 }
 
-function setContextTemplate(type:string):string {
+function pipeOnDestroyTemplate(pipeNames:List) {
+  return pipeNames.map((p) => `${p}.onDestroy()`).join("\n");
+}
+
+function hydrateTemplate(type:string, fieldsDefinitions:string, pipeOnDestroy:string):string {
   return `
-${type}.prototype.setContext = function(context) {
+${type}.prototype.hydrate = function(context) {
   this.context = context;
+}
+${type}.prototype.dehydrate = function() {
+  ${pipeOnDestroy}
+  ${fieldsDefinitions}
+}
+${type}.prototype.hydrated = function() {
+  return this.context !== ${UTIL}.unitialized();
 }
 `;
 }
@@ -164,11 +180,14 @@ if (${CHANGES_LOCAL} && ${CHANGES_LOCAL}.length > 0) {
 `;
 }
 
-function pipeCheckTemplate(context:string, pipe:string,
+function pipeCheckTemplate(context:string, pipe:string, pipeType:string,
                                   value:string, change:string, addRecord:string, notify:string):string{
   return `
-if (${pipe} === ${UTIL}.unitialized() || !${pipe}.supports(${context})) {
-  ${pipe} = ${PIPE_REGISTRY_ACCESSOR}.get('[]', ${context});
+if (${pipe} === ${UTIL}.unitialized()) {
+  ${pipe} = ${PIPE_REGISTRY_ACCESSOR}.get('${pipeType}', ${context});
+} else if (!${pipe}.supports(${context})) {
+  ${pipe}.onDestroy();
+  ${pipe} = ${PIPE_REGISTRY_ACCESSOR}.get('${pipeType}', ${context});
 }
 
 ${CHANGE_LOCAL} = ${pipe}.transform(${context});
@@ -204,6 +223,17 @@ if (${TEMP_LOCAL} instanceof ContextWithVariableBindings) {
   ${newValue} = ${TEMP_LOCAL}.get('${name}');
 } else {
   ${newValue} = ${TEMP_LOCAL}.${name};
+}
+`;
+}
+
+function invokeMethodTemplate(name:string, args:string, context:string, newValue:string) {
+  return `
+${TEMP_LOCAL} = ${UTIL}.findContext("${name}", ${context});
+if (${TEMP_LOCAL} instanceof ContextWithVariableBindings) {
+  ${newValue} = ${TEMP_LOCAL}.get('${name}').apply(null, [${args}]);
+} else {
+  ${newValue} = ${context}.${name}(${args});
 }
 `;
 }
@@ -275,25 +305,34 @@ export class ChangeDetectorJITGenerator {
   }
 
   generate():Function {
-    var text = typeTemplate(this.typeName, this.genConstructor(), this.genDetectChanges(), this.genSetContext());
+    var text = typeTemplate(this.typeName, this.genConstructor(), this.genDetectChanges(), this.genHydrate());
     return new Function('AbstractChangeDetector', 'ChangeDetectionUtil', 'ContextWithVariableBindings', 'protos', text)(AbstractChangeDetector, ChangeDetectionUtil, ContextWithVariableBindings, this.records);
   }
 
   genConstructor():string {
-    var fields = [];
-    fields = fields.concat(this.fieldNames);
-
-    this.records.forEach((r) => {
-      if (r.mode === RECORD_TYPE_STRUCTURAL_CHECK) {
-        fields.push(this.pipeNames[r.selfIndex]);
-      }
-    });
-
-    return constructorTemplate(this.typeName, fieldDefinitionsTemplate(fields));
+    return constructorTemplate(this.typeName, this.genFieldDefinitions());
   }
 
-  genSetContext():string {
-    return setContextTemplate(this.typeName);
+  genHydrate():string {
+    return hydrateTemplate(this.typeName, this.genFieldDefinitions(),
+      pipeOnDestroyTemplate(this.getnonNullPipeNames()));
+  }
+
+  genFieldDefinitions() {
+    var fields = [];
+    fields = fields.concat(this.fieldNames);
+    fields = fields.concat(this.getnonNullPipeNames());
+    return fieldDefinitionsTemplate(fields);
+  }
+
+  getnonNullPipeNames():List<String> {
+    var pipes = [];
+    this.records.forEach((r) => {
+      if (r.mode === RECORD_TYPE_PIPE) {
+        pipes.push(this.pipeNames[r.selfIndex]);
+      }
+    });
+    return pipes;
   }
 
   genDetectChanges():string {
@@ -315,7 +354,7 @@ export class ChangeDetectorJITGenerator {
   }
 
   genRecord(r:ProtoRecord):string {
-    if (r.mode === RECORD_TYPE_STRUCTURAL_CHECK) {
+    if (r.mode === RECORD_TYPE_PIPE) {
       return this.genPipeCheck (r);
     } else {
       return this.genReferenceCheck(r);
@@ -332,7 +371,7 @@ export class ChangeDetectorJITGenerator {
     var addRecord = addSimpleChangeRecordTemplate(r.selfIndex - 1, oldValue, newValue);
     var notify = this.genNotify(r);
 
-    return pipeCheckTemplate(context, pipe, newValue, change, addRecord, notify);
+    return pipeCheckTemplate(context, pipe, r.name, newValue, change, addRecord, notify);
   }
 
   genReferenceCheck(r:ProtoRecord):string {
@@ -371,7 +410,11 @@ export class ChangeDetectorJITGenerator {
         }
 
       case RECORD_TYPE_INVOKE_METHOD:
-        return assignmentTemplate(newValue, `${context}.${r.name}(${args})`);
+        if (r.contextIndex == 0) { // only the first property read can be a local
+          return invokeMethodTemplate(r.name, args, context, newValue);
+        } else {
+          return assignmentTemplate(newValue, `${context}.${r.name}(${args})`);
+        }
 
       case RECORD_TYPE_INVOKE_CLOSURE:
         return assignmentTemplate(newValue, `${context}(${args})`);
@@ -381,9 +424,6 @@ export class ChangeDetectorJITGenerator {
 
       case RECORD_TYPE_INTERPOLATE:
         return assignmentTemplate(newValue, this.genInterpolation(r));
-
-      case RECORD_TYPE_INVOKE_FORMATTER:
-        return assignmentTemplate(newValue, `${FORMATTERS_ACCESSOR}.get("${r.name}")(${args})`);
 
       case RECORD_TYPE_KEYED_ACCESS:
         var key = this.localNames[r.args[0]];

@@ -1,4 +1,4 @@
-var testUtil = require('angular2/e2e_test/test_util');
+var testUtil = require('angular2/src/test_lib/e2e_util');
 
 describe('ng2 naive infinite scroll benchmark', function () {
 
@@ -53,10 +53,8 @@ describe('ng2 naive infinite scroll benchmark', function () {
       });
     })
 
-    browser.executeScript(
-        'document.querySelector("scroll-app /deep/ #reset-btn").click()');
-    browser.executeScript(
-        'document.querySelector("scroll-app /deep/ #run-btn").click()');
+    $("#reset-btn").click();
+    $("#run-btn").click();
     browser.wait(() => {
       return $('#done').getText().then(
         function() { return true; },

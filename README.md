@@ -44,8 +44,8 @@ If you don't already have `npm`, get it by installing [node.js](http://nodejs.or
 
 ### Unit tests
 
-1. `gulp test.js`: JS tests
-2. `gulp test.dart`: Dart tests
+1. `gulp test.unit.js`: JS tests
+2. `gulp test.unit.dart`: Dart tests
 
 Notes for transpiler tests:
 
@@ -62,7 +62,7 @@ to the preprocessor and run the tests without exiting karma
 4. `protractor protractor-dart2js.conf.js`: Dart2JS e2e tests
 
 Angular specific command line options when running protractor:
-`protractor protractor-{js|dart2js}-conf.js --ng-help`
+  - `protractor protractor-{js|dart2js}-conf.js --ng-help`
 
 ### Performance tests
 
@@ -85,7 +85,7 @@ source `modules/examples/src/hello_world/index.js`.
 
 You can build this example as either JS or Dart app:
 * (JS) `gulp serve.js.dev` and open `localhost:8000/examples/src/hello_world/` in Chrome.
-* (Dart) `gulp serve/examples.dart` and open `localhost:8080/hello_world` in Chrome (for dart2js) or Dartium (for Dart VM).
+* (Dart) `gulp serve/examples.dart` and open `localhost:8080/src/hello_world` in Chrome (for dart2js) or Dartium (for Dart VM).
 
 ## Debug the transpiler
 

@@ -1,13 +1,14 @@
 library test_lib.test_lib;
 
-import 'package:guinness/guinness_html.dart' as gns;
-export 'package:guinness/guinness_html.dart';
+import 'package:guinness/guinness.dart' as gns;
+export 'package:guinness/guinness.dart' hide Expect, expect, NotExpect, beforeEach, it, iit;
 import 'package:unittest/unittest.dart' hide expect;
 import 'dart:mirrors';
 import 'dart:async';
 import 'package:angular2/src/reflection/reflection.dart';
 import 'package:angular2/src/reflection/reflection_capabilities.dart';
 import 'package:collection/equality.dart';
+import 'package:angular2/src/dom/dom_adapter.dart' show DOM;
 
 bool IS_DARTIUM = true;
 
@@ -29,6 +30,7 @@ class Expect extends gns.Expect {
   void toBePromise() => _expect(actual is Future, equals(true));
   void toImplement(expected) => toBeA(expected);
   void toBeNaN() => _expect(double.NAN.compareTo(actual) == 0, equals(true));
+  void toHaveText(expected) => _expect(elementText(actual), expected);
   Function get _expect => gns.guinness.matchers.expect;
 }
 
@@ -38,11 +40,11 @@ class NotExpect extends gns.NotExpect {
   // TODO(tbosch) change back when https://github.com/vsavkin/guinness/issues/41 is fixed
   // void toEqual(expected) => toHaveSameProps(expected);
   void toEqual(expected) => _expect(actual, isNot(new FixedSamePropsMatcher(expected)));
+  void toBePromise() => _expect(actual is Future, equals(false));
   Function get _expect => gns.guinness.matchers.expect;
 }
 
 beforeEach(fn) {
-  gns.guinnessEnableHtmlMatchers();
   gns.beforeEach(_enableReflection(fn));
 }
 
@@ -135,4 +137,33 @@ class _FixedObjToData {
       return map;
     });
   }
+}
+
+String elementText(n) {
+  hasNodes(n) {
+    var children = DOM.childNodes(n);
+    return children != null && children.length > 0;
+  }
+
+  if (n is Iterable) {
+    return n.map((nn) => elementText(nn)).join("");
+  }
+
+  if (DOM.isCommentNode(n)) {
+    return '';
+  }
+
+  if (DOM.isElementNode(n) && DOM.tagName(n) == 'CONTENT') {
+    return elementText(n.getDistributedNodes());
+  }
+
+  if (DOM.hasShadowRoot(n)) {
+    return elementText(DOM.childNodesAsList(n.shadowRoot));
+  }
+
+  if (hasNodes(n)) {
+    return elementText(DOM.childNodesAsList(n));
+  }
+
+  return DOM.getText(n);
 }

@@ -1,7 +1,7 @@
 import {describe, beforeEach, it, expect, ddescribe, iit, SpyObject, el, proxy} from 'angular2/test_lib';
 import {IMPLEMENTS, isBlank} from 'angular2/src/facade/lang';
 import {ListWrapper, MapWrapper} from 'angular2/src/facade/collection';
-import {DOM} from 'angular2/src/facade/dom';
+import {DOM} from 'angular2/src/dom/dom_adapter';
 import {Content} from 'angular2/src/core/compiler/shadow_dom_emulation/content_tag';
 import {LightDom} from 'angular2/src/core/compiler/shadow_dom_emulation/light_dom';
 import {View} from 'angular2/src/core/compiler/view';
@@ -172,6 +172,19 @@ export function main() {
             new FakeContentTag(null, [el("<a></a>")]),
             null,
             DOM.firstChild(lightDomEl))]);
+
+        var lightDom = new LightDom(
+          lightDomView,
+          new FakeView(),
+          lightDomEl);
+
+        expect(toHtml(lightDom.expandedDomNodes())).toEqual(["<a></a>"]);
+      });
+
+      it("should work when the element injector array contains nulls", () => {
+        var lightDomEl = el("<div><a></a></div>")
+
+        var lightDomView = new FakeView([null]);
 
         var lightDom = new LightDom(
           lightDomView,

@@ -8,7 +8,7 @@ import {
   Sampler, WebDriverAdapter, WebDriverExtension,
   Validator, Metric, Reporter, Browser,
   bind, Injector, Options, MeasureValues
-} from 'benchpress/benchpress';
+} from 'benchpress/common';
 
 export function main() {
   var EMPTY_EXECUTE = () => {};
@@ -148,7 +148,6 @@ export function main() {
     });
 
     it('should not gc if the flag is not set', (done) => {
-      var workCount = 0;
       var log = [];
       createSampler({
         metric: createCountingMetric(),

@@ -1,4 +1,5 @@
-import {DOM, Element, Node, Text, DocumentFragment, TemplateElement} from 'angular2/src/facade/dom';
+import {DOM} from 'angular2/src/dom/dom_adapter';
+import {Promise} from 'angular2/src/facade/async';
 import {ListWrapper, MapWrapper, StringMapWrapper, List} from 'angular2/src/facade/collection';
 import {AST, ContextWithVariableBindings, ChangeDispatcher, ProtoChangeDetector, ChangeDetector, ChangeRecord}
   from 'angular2/change_detection';
@@ -19,8 +20,6 @@ import {EventManager} from 'angular2/src/core/events/event_manager';
 
 const NG_BINDING_CLASS = 'ng-binding';
 const NG_BINDING_CLASS_SELECTOR = '.ng-binding';
-// TODO(tbosch): Cannot use `const` because of Dart.
-var NO_FORMATTERS = MapWrapper.create();
 
 // TODO(rado): make this configurable/smarter.
 var VIEW_POOL_CAPACITY = 10000;
@@ -34,12 +33,12 @@ export class View {
   /// This list matches the _nodes list. It is sparse, since only Elements have ElementInjector
   rootElementInjectors:List<ElementInjector>;
   elementInjectors:List<ElementInjector>;
-  bindElements:List<Element>;
-  textNodes:List<Text>;
+  bindElements:List;
+  textNodes:List;
   changeDetector:ChangeDetector;
   /// When the view is part of render tree, the DocumentFragment is empty, which is why we need
   /// to keep track of the nodes.
-  nodes:List<Node>;
+  nodes:List;
   componentChildViews: List<View>;
   viewContainers: List<ViewContainer>;
   preBuiltObjects: List<PreBuiltObjects>;
@@ -47,10 +46,10 @@ export class View {
   context: any;
   contextWithLocals:ContextWithVariableBindings;
 
-  constructor(proto:ProtoView, nodes:List<Node>, protoChangeDetector:ProtoChangeDetector, protoContextLocals:Map) {
+  constructor(proto:ProtoView, nodes:List, protoChangeDetector:ProtoChangeDetector, protoContextLocals:Map) {
     this.proto = proto;
     this.nodes = nodes;
-    this.changeDetector = protoChangeDetector.instantiate(this, NO_FORMATTERS);
+    this.changeDetector = protoChangeDetector.instantiate(this);
     this.elementInjectors = null;
     this.rootElementInjectors = null;
     this.textNodes = null;
@@ -98,7 +97,7 @@ export class View {
     // TODO(tbosch): if we have a contextWithLocals we actually only need to
     // set the contextWithLocals once. Would it be faster to always use a contextWithLocals
     // even if we don't have locals and not update the recordRange here?
-    this.changeDetector.setContext(this.context);
+    this.changeDetector.hydrate(this.context);
   }
 
   _dehydrateContext() {
@@ -106,6 +105,7 @@ export class View {
       this.contextWithLocals.clearValues();
     }
     this.context = null;
+    this.changeDetector.dehydrate();
   }
 
   /**
@@ -263,7 +263,7 @@ export class View {
 }
 
 export class ProtoView {
-  element:Element;
+  element;
   elementBinders:List<ElementBinder>;
   protoChangeDetector:ProtoChangeDetector;
   variableBindings: Map;
@@ -275,8 +275,10 @@ export class ProtoView {
   isTemplateElement:boolean;
   shadowDomStrategy: ShadowDomStrategy;
   _viewPool: ViewPool;
+  stylePromises: List<Promise>;
+
   constructor(
-      template:Element,
+      template,
       protoChangeDetector:ProtoChangeDetector,
       shadowDomStrategy: ShadowDomStrategy) {
     this.element = template;
@@ -289,9 +291,10 @@ export class ProtoView {
     this.instantiateInPlace = false;
     this.rootBindingOffset = (isPresent(this.element) && DOM.hasClass(this.element, NG_BINDING_CLASS))
       ? 1 : 0;
-    this.isTemplateElement = this.element instanceof TemplateElement;
+    this.isTemplateElement = DOM.isTemplateElement(this.element);
     this.shadowDomStrategy = shadowDomStrategy;
     this._viewPool = new ViewPool(VIEW_POOL_CAPACITY);
+    this.stylePromises = [];
   }
 
   // TODO(rado): hostElementInjector should be moved to hydrate phase.
@@ -308,10 +311,10 @@ export class ProtoView {
   }
 
   _instantiate(hostElementInjector: ElementInjector, eventManager: EventManager): View {
-    var rootElementClone = this.instantiateInPlace ? this.element : DOM.clone(this.element);
+    var rootElementClone = this.instantiateInPlace ? this.element : DOM.importIntoDoc(this.element);
     var elementsWithBindingsDynamic;
     if (this.isTemplateElement) {
-      elementsWithBindingsDynamic = DOM.querySelectorAll(rootElementClone.content, NG_BINDING_CLASS_SELECTOR);
+      elementsWithBindingsDynamic = DOM.querySelectorAll(DOM.content(rootElementClone), NG_BINDING_CLASS_SELECTOR);
     } else {
       elementsWithBindingsDynamic= DOM.getElementsByClassName(rootElementClone, NG_BINDING_CLASS);
     }
@@ -323,7 +326,7 @@ export class ProtoView {
 
     var viewNodes;
     if (this.isTemplateElement) {
-      var childNode = DOM.firstChild(rootElementClone.content);
+      var childNode = DOM.firstChild(DOM.content(rootElementClone));
       viewNodes = []; // TODO(perf): Should be fixed size, since we could pre-compute in in ProtoView
       // Note: An explicit loop is the fastest way to convert a DOM array into a JS array!
       while(childNode != null) {
@@ -511,8 +514,7 @@ export class ProtoView {
     directiveIndex:number,
     expression:AST,
     setterName:string,
-    setter:SetterFn,
-    isContentWatch: boolean) {
+    setter:SetterFn) {
 
     var bindingMemento = new DirectiveBindingMemento(
       this.elementBinders.length-1,
@@ -521,7 +523,7 @@ export class ProtoView {
       setter
     );
     var directiveMemento = DirectiveMemento.get(bindingMemento);
-    this.protoChangeDetector.addAst(expression, bindingMemento, directiveMemento, isContentWatch);
+    this.protoChangeDetector.addAst(expression, bindingMemento, directiveMemento);
   }
 
   // Create a rootView as if the compiler encountered <rootcmp></rootcmp>,
@@ -535,12 +537,14 @@ export class ProtoView {
   ): ProtoView {
 
     DOM.addClass(insertionElement, NG_BINDING_CLASS);
+    var cmpType = rootComponentAnnotatedType.type;
     var rootProtoView = new ProtoView(insertionElement, protoChangeDetector, shadowDomStrategy);
     rootProtoView.instantiateInPlace = true;
     var binder = rootProtoView.bindElement(
-        new ProtoElementInjector(null, 0, [rootComponentAnnotatedType.type], true));
+        new ProtoElementInjector(null, 0, [cmpType], true));
     binder.componentDirective = rootComponentAnnotatedType;
     binder.nestedProtoView = protoView;
+    shadowDomStrategy.shimAppElement(rootComponentAnnotatedType, insertionElement);
     return rootProtoView;
   }
 }
@@ -555,8 +559,8 @@ export class ElementBindingMemento {
     this._setter = setter;
   }
 
-  invoke(record:ChangeRecord, bindElements:List<Element>) {
-    var element:Element = bindElements[this._elementIndex];
+  invoke(record:ChangeRecord, bindElements:List) {
+    var element = bindElements[this._elementIndex];
     this._setter(element, record.currentValue);
   }
 }

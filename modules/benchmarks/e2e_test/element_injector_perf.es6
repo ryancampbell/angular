@@ -1,4 +1,4 @@
-var perfUtil = require('angular2/e2e_test/perf_util');
+var perfUtil = require('angular2/src/test_lib/perf_util');
 
 describe('ng2 element injector benchmark', function () {
 
@@ -11,9 +11,7 @@ describe('ng2 element injector benchmark', function () {
       url: URL,
       buttons: ['#instantiate'],
       id: 'ng2.elementInjector.instantiate',
-      params: [{
-        name: 'iterations', value: 20000, scale: 'linear'
-      }]
+      microIterations: 20000
     }).then(done, done.fail);
   });
 
@@ -22,9 +20,7 @@ describe('ng2 element injector benchmark', function () {
       url: URL,
       buttons: ['#instantiateDirectives'],
       id: 'ng2.elementInjector.instantiateDirectives',
-      params: [{
-        name: 'iterations', value: 20000, scale: 'linear'
-      }]
+      microIterations: 20000
     }).then(done, done.fail);
   });
 

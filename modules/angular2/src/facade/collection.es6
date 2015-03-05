@@ -3,6 +3,7 @@ import {int, isJsObject, global} from 'angular2/src/facade/lang';
 export var List = global.Array;
 export var Map = global.Map;
 export var Set = global.Set;
+export var StringMap = global.Object;
 
 export class MapWrapper {
   static create():Map { return new Map(); }
@@ -24,12 +25,18 @@ export class MapWrapper {
   static size(m) {return m.size;}
   static delete(m, k) { m.delete(k); }
   static clear(m) { m.clear(); }
+  static clearValues(m) {
+    var keyIterator = m.keys();
+    var k;
+    while (!((k = keyIterator.next()).done)) {
+      m.set(k.value, null);
+    }
+  }
   static iterable(m) { return m; }
   static keys(m) { return m.keys(); }
   static values(m) { return m.values(); }
 }
 
-// TODO: cannot export StringMap as a type as Dart does not support renaming types...
 /**
  * Wraps Javascript Objects
  */
@@ -93,9 +100,9 @@ export class ListWrapper {
   static map(array, fn) {
     return array.map(fn);
   }
-  static forEach(array, fn) {
-    for(var p of array) {
-      fn(p);
+  static forEach(array:List, fn:Function) {
+    for (var i = 0; i < array.length; i++) {
+      fn(array[i]);
     }
   }
   static push(array, el) {
@@ -185,6 +192,9 @@ export class ListWrapper {
   static slice(l:List, from:int, to:int):List {
     return l.slice(from, to);
   }
+  static sort(l:List, compareFn:Function) {
+    l.sort(compareFn);
+  }
 }
 
 export function isListLikeIterable(obj):boolean {
@@ -195,8 +205,16 @@ export function isListLikeIterable(obj):boolean {
 }
 
 export function iterateListLike(obj, fn:Function) {
-  for (var item of obj) {
-    fn(item);
+  if (ListWrapper.isList(obj)) {
+    for (var i = 0; i < obj.length; i++) {
+      fn(obj[i]);
+    }
+  } else {
+    var iterator = obj[Symbol.iterator]();
+    var item;
+    while (!((item = iterator.next()).done)) {
+      fn(item.value);
+    }
   }
 }
 

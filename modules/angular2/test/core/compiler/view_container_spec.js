@@ -2,7 +2,7 @@ import {describe, xit, it, expect, beforeEach, ddescribe, iit, el, proxy} from '
 import {View, ProtoView} from 'angular2/src/core/compiler/view';
 import {ViewContainer} from 'angular2/src/core/compiler/view_container';
 import {IMPLEMENTS} from 'angular2/src/facade/lang';
-import {DOM, Node} from 'angular2/src/facade/dom';
+import {DOM} from 'angular2/src/dom/dom_adapter';
 import {ListWrapper, MapWrapper} from 'angular2/src/facade/collection';
 import {Injector} from 'angular2/di';
 import {ProtoElementInjector, ElementInjector} from 'angular2/src/core/compiler/element_injector';
@@ -33,7 +33,7 @@ class AttachableChangeDetector {
 @IMPLEMENTS(View)
 class HydrateAwareFakeView {
   isHydrated: boolean;
-  nodes: List<Node>;
+  nodes: List;
   changeDetector: ChangeDetector;
   rootElementInjectors;
   constructor(isHydrated) {
@@ -69,7 +69,8 @@ export function main() {
       dom = el(`<div><stuff></stuff><div insert-after-me></div><stuff></stuff></div>`);
       var insertionElement = dom.childNodes[1];
       parentView = createView([dom.childNodes[0]]);
-      protoView = new ProtoView(el('<div>hi</div>'), new DynamicProtoChangeDetector(null), new NativeShadowDomStrategy());
+      protoView = new ProtoView(el('<div>hi</div>'), new DynamicProtoChangeDetector(null),
+        new NativeShadowDomStrategy(null));
       elementInjector = new ElementInjector(null, null, null, null);
       viewContainer = new ViewContainer(parentView, insertionElement, protoView, elementInjector, null);
       customViewWithOneNode = createView([el('<div>single</div>')]);
@@ -213,7 +214,7 @@ export function main() {
         viewContainer.hydrate(new Injector([]), null);
 
         var pv = new ProtoView(el('<div class="ng-binding">{{}}</div>'),
-          new DynamicProtoChangeDetector(null), new NativeShadowDomStrategy());
+          new DynamicProtoChangeDetector(null), new NativeShadowDomStrategy(null));
         pv.bindElement(new ProtoElementInjector(null, 1, [SomeDirective]));
         pv.bindTextNode(0, parser.parseBinding('foo', null));
         fancyView = pv.instantiate(null, null);

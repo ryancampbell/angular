@@ -6,11 +6,10 @@ var argv = require('yargs')
     .options({
       'sample-size': {
         describe: 'sample size',
-        default: 20,
-        type: 'boolean'
+        default: 20
       },
       'force-gc': {
-        describe: 'force gc',
+        describe: 'force gc.',
         default: false,
         type: 'boolean'
       },
@@ -19,8 +18,12 @@ var argv = require('yargs')
         default: false
       },
       'browsers': {
-        describe: 'preconfigured browsers that should be used',
+        describe: 'comma separated list of preconfigured browsers to use',
         default: 'ChromeDesktop'
+      },
+      'spec': {
+        describe: 'comma separated file patterns to test',
+        default: false
       }
     })
     .help('ng-help')
@@ -29,14 +32,32 @@ var argv = require('yargs')
 
 var browsers = argv['browsers'].split(',');
 
+var CHROME_OPTIONS = {
+  'args': ['--js-flags=--expose-gc'],
+  'perfLoggingPrefs': {
+    'traceCategories': 'v8,blink.console,disabled-by-default-devtools.timeline'
+  }
+};
+
+var CHROME_MOBILE_EMULATION = {
+  // Can't use 'deviceName':'Google Nexus 7 2'
+  // as this would yield wrong orientation,
+  // so we specify facts explicitly
+  'deviceMetrics': {
+    'width': 600,
+    'height': 960,
+    'pixelRatio': 2
+  }
+};
+
 var BROWSER_CAPS = {
   Dartium: {
     name: 'Dartium',
     browserName: 'chrome',
-    chromeOptions: {
-      'binary': process.env.DARTIUM,
-      'args': ['--js-flags=--expose-gc']
-    },
+    chromeOptions: mergeInto(CHROME_OPTIONS, {
+      'mobileEmulation': CHROME_MOBILE_EMULATION,
+      'binary': process.env.DARTIUM
+    }),
     loggingPrefs: {
       performance: 'ALL',
       browser: 'ALL'
@@ -44,9 +65,9 @@ var BROWSER_CAPS = {
   },
   ChromeDesktop: {
     browserName: 'chrome',
-    chromeOptions: {
-      'args': ['--js-flags=--expose-gc']
-    },
+    chromeOptions: mergeInto(CHROME_OPTIONS, {
+      'mobileEmulation': CHROME_MOBILE_EMULATION
+    }),
     loggingPrefs: {
       performance: 'ALL',
       browser: 'ALL'
@@ -54,10 +75,30 @@ var BROWSER_CAPS = {
   },
   ChromeAndroid: {
     browserName: 'chrome',
-    chromeOptions: {
-      androidPackage: 'com.android.chrome',
-      'args': ['--js-flags=--expose-gc']
-    },
+    chromeOptions: mergeInto(CHROME_OPTIONS, {
+      'androidPackage': 'com.android.chrome',
+    }),
+    loggingPrefs: {
+      performance: 'ALL',
+      browser: 'ALL'
+    }
+  },
+  IPhoneSimulator: {
+    browserName: 'MobileSafari',
+    simulator: true,
+    CFBundleName: 'Safari',
+    device: 'iphone',
+    instruments: 'true',
+    loggingPrefs: {
+      performance: 'ALL',
+      browser: 'ALL'
+    }
+  },
+  IPadNative: {
+    browserName: 'MobileSafari',
+    simulator: false,
+    CFBundleName: 'Safari',
+    device: 'ipad',
     loggingPrefs: {
       performance: 'ALL',
       browser: 'ALL'
@@ -65,27 +106,45 @@ var BROWSER_CAPS = {
   }
 };
 
+var getBenchmarkFiles = function (benchmark, spec) {
+  var specFiles = [];
+  var perfFiles = [];
+  if (spec.length) {
+    spec.split(',').forEach(function (name) {
+      specFiles.push('dist/js/cjs/**/e2e_test/' + name)
+      perfFiles.push('dist/js/cjs/**/e2e_test/' + name)
+    });
+  } else {
+    specFiles.push('dist/js/cjs/**/e2e_test/**/*_spec.js');
+    perfFiles.push('dist/js/cjs/**/e2e_test/**/*_perf.js');
+  }
+  return benchmark ? perfFiles : specFiles.concat(perfFiles);
+};
+
 var config = exports.config = {
-  // Disable waiting for Angular as we don't have an integration layer yet...
-  // TODO(tbosch): Implement a proper debugging API for Ng2.0, remove this here
-  // and the sleeps in all tests.
   onPrepare: function() {
-    browser.ignoreSynchronization = true;
-    var _get = browser.get;
-    var sleepInterval = process.env.TRAVIS || process.env.JENKINS_URL ? 7000 : 3000;
-    browser.get = function() {
-      var result = _get.apply(this, arguments);
-      browser.sleep(sleepInterval);
-      return result;
+    patchProtractorWait(browser);
+    // During benchmarking, we need to open a new browser
+    // for every benchmark, otherwise the numbers can get skewed
+    // from other benchmarks (e.g. Chrome keeps JIT caches, ...)
+    if (argv['benchmark']) {
+      var originalBrowser = browser;
+      var _tmpBrowser;
+      beforeEach(function() {
+        global.browser = originalBrowser.forkNewDriverInstance();
+        patchProtractorWait(global.browser);
+        global.element = global.browser.element;
+        global.$ = global.browser.$;
+        global.$$ = global.browser.$$;
+      });
+      afterEach(function() {
+        global.browser.quit();
+        global.browser = originalBrowser;
+      });
     }
   },
 
-  specs: argv['benchmark'] ? [
-    'dist/js/cjs/**/e2e_test/**/*_perf.js'
-  ] : [
-    'dist/js/cjs/**/e2e_test/**/*_spec.js',
-    'dist/js/cjs/**/e2e_test/**/*_perf.js'
-  ],
+  specs: getBenchmarkFiles(argv['benchmark'], argv['spec']),
 
   exclude: [
     'dist/js/cjs/**/node_modules/**',
@@ -104,7 +163,7 @@ var config = exports.config = {
 
   jasmineNodeOpts: {
     showColors: true,
-    defaultTimeoutInterval: argv.benchpress ? 80000 : 30000
+    defaultTimeoutInterval: argv['benchmark'] ? 1200000 : 30000
   },
   params: {
     benchmark: {
@@ -115,11 +174,23 @@ var config = exports.config = {
   }
 };
 
+// Disable waiting for Angular as we don't have an integration layer yet...
+// TODO(tbosch): Implement a proper debugging API for Ng2.0, remove this here
+// and the sleeps in all tests.
+function patchProtractorWait(browser) {
+  browser.ignoreSynchronization = true;
+  var _get = browser.get;
+  var sleepInterval = process.env.TRAVIS || process.env.JENKINS_URL ? 7000 : 3000;
+  browser.get = function() {
+    var result = _get.apply(this, arguments);
+    browser.sleep(sleepInterval);
+    return result;
+  }
+}
+
 exports.createBenchpressRunner = function(options) {
   var nodeUuid = require('node-uuid');
   var benchpress = require('./dist/js/cjs/benchpress/benchpress');
-  var SeleniumWebDriverAdapter =
-    require('./dist/js/cjs/benchpress/src/webdriver/selenium_webdriver_adapter').SeleniumWebDriverAdapter;
 
   // TODO(tbosch): add cloud reporter again (only when !options.test)
   // var cloudReporterConfig;
@@ -138,9 +209,7 @@ exports.createBenchpressRunner = function(options) {
     runId = process.env.GIT_SHA + ' ' + runId;
   }
   var bindings = [
-    benchpress.bind(benchpress.WebDriverAdapter).toFactory(
-      function() { return new SeleniumWebDriverAdapter(global.browser); }, []
-    ),
+    benchpress.SeleniumWebDriverAdapter.PROTRACTOR_BINDINGS,
     benchpress.bind(benchpress.Options.FORCE_GC).toValue(argv['force-gc']),
     benchpress.bind(benchpress.Options.DEFAULT_DESCRIPTION).toValue({
       'lang': options.lang,
@@ -148,12 +217,19 @@ exports.createBenchpressRunner = function(options) {
     })
   ];
   if (argv['benchmark']) {
-    bindings.push(benchpress.RegressionSlopeValidator.BINDINGS);
+    bindings.push(benchpress.Validator.bindTo(benchpress.RegressionSlopeValidator));
     bindings.push(benchpress.bind(benchpress.RegressionSlopeValidator.SAMPLE_SIZE).toValue(argv['sample-size']));
   } else {
-    bindings.push(benchpress.SizeValidator.BINDINGS);
+    bindings.push(benchpress.Validator.bindTo(benchpress.SizeValidator));
     bindings.push(benchpress.bind(benchpress.SizeValidator.SAMPLE_SIZE).toValue(1));
   }
 
   global.benchpressRunner = new benchpress.Runner(bindings);
 }
+
+function mergeInto(src, target) {
+  for (var prop in src) {
+    target[prop] = src[prop];
+  }
+  return target;
+ }

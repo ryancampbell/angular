@@ -2,8 +2,8 @@ import {describe, it, iit, xit, expect, beforeEach, afterEach} from 'angular2/te
 import {
   Runner, Sampler, SampleDescription,
   Validator, bind, Injector, Metric,
-  Options
-} from 'benchpress/benchpress';
+  Options, WebDriverAdapter
+} from 'benchpress/common';
 import { isBlank } from 'angular2/src/facade/lang';
 import { Promise, PromiseWrapper } from 'angular2/src/facade/async';
 
@@ -25,16 +25,19 @@ export function main() {
           }, [Injector]
         ),
         bind(Metric).toFactory( () => new MockMetric(), []),
-        bind(Validator).toFactory( () => new MockValidator(), [])
+        bind(Validator).toFactory( () => new MockValidator(), []),
+        bind(WebDriverAdapter).toFactory( () => new MockWebDriverAdapter(), [])
       ]);
       return runner;
     }
 
     it('should set SampleDescription.id', (done) => {
-      createRunner().sample({id: 'someId'}).then( (_) => {
-        expect(injector.get(SampleDescription).id).toBe('someId');
-        done();
-      });
+      createRunner().sample({id: 'someId'})
+        .then( (_) => injector.asyncGet(SampleDescription) )
+        .then( (desc) => {
+          expect(desc.id).toBe('someId');
+          done();
+        });
     });
 
     it('should merge SampleDescription.description', (done) => {
@@ -42,9 +45,12 @@ export function main() {
         bind(Options.DEFAULT_DESCRIPTION).toValue({'a': 1})
       ]).sample({id: 'someId', bindings: [
         bind(Options.SAMPLE_DESCRIPTION).toValue({'b': 2})
-      ]}).then( (_) => {
-        expect(injector.get(SampleDescription).description).toEqual({
+      ]}).then( (_) => injector.asyncGet(SampleDescription) )
+         .then( (desc) => {
+
+        expect(desc.description).toEqual({
           'forceGc': false,
+          'userAgent': 'someUserAgent',
           'a': 1,
           'b': 2,
           'v': 11
@@ -54,8 +60,11 @@ export function main() {
     });
 
     it('should fill SampleDescription.metrics from the Metric', (done) => {
-      createRunner().sample({id: 'someId'}).then( (_) => {
-        expect(injector.get(SampleDescription).metrics).toEqual({ 'm1': 'some metric' });
+      createRunner().sample({id: 'someId'})
+        .then( (_) => injector.asyncGet(SampleDescription) )
+        .then( (desc) => {
+
+        expect(desc.metrics).toEqual({ 'm1': 'some metric' });
         done();
       });
     });
@@ -76,12 +85,21 @@ export function main() {
       });
     });
 
+    it('should bind Options.MICRO_ITERATIONS', (done) => {
+      createRunner().sample({id: 'someId', microIterations: 23}).then( (_) => {
+        expect(injector.get(Options.MICRO_ITERATIONS)).toEqual(23);
+        done();
+      });
+    });
+
     it('should overwrite bindings per sample call', (done) => {
       createRunner([
         bind(Options.DEFAULT_DESCRIPTION).toValue({'a': 1}),
       ]).sample({id: 'someId', bindings: [
         bind(Options.DEFAULT_DESCRIPTION).toValue({'a': 2}),
-      ]}).then( (_) => {
+      ]}).then( (_) => injector.asyncGet(SampleDescription) )
+         .then( (desc) => {
+
         expect(injector.get(SampleDescription).description['a']).toBe(2);
         done();
       });
@@ -89,6 +107,12 @@ export function main() {
     });
 
   });
+}
+
+class MockWebDriverAdapter extends WebDriverAdapter {
+  executeScript(script):Promise {
+    return PromiseWrapper.resolve('someUserAgent');
+  }
 }
 
 class MockValidator extends Validator {

@@ -74,7 +74,15 @@ function assertArgumentTypes(...params) {
   }
 }
 
-function prettyPrint(value) {
+function prettyPrint(value, depth) {
+  if (typeof(depth) === 'undefined') {
+    depth = 0;
+  }
+
+  if (depth++ > 3) {
+    return '[...]';
+  }
+
   if (typeof value === 'undefined') {
     return 'undefined';
   }
@@ -96,12 +104,17 @@ function prettyPrint(value) {
       return value.__assertName;
     }
 
-    if (value.map) {
-      return '[' + value.map(prettyPrint).join(', ') + ']';
+    if (value.map && typeof value.map === 'function') {
+      return '[' + value.map((v) => prettyPrint(v, depth)).join(', ') + ']';
     }
 
     var properties = Object.keys(value);
-    return '{' + properties.map((p) => p + ': ' + prettyPrint(value[p])).join(', ') + '}';
+    var suffix = '}';
+    if (properties.length > 20) {
+      properties.length = 20;
+      suffix = ', ... }';
+    }
+    return '{' + properties.map((p) => p + ': ' + prettyPrint(value[p], depth)).join(', ') + suffix;
   }
 
   return value.__assertName || value.name || value.toString();
@@ -246,8 +259,8 @@ var number = type.number = define('number', function(value) {
 function arrayOf(...types) {
   return assert.define('array of ' + types.map(prettyPrint).join('/'), function(value) {
     if (assert(value).is(Array)) {
-      for (var item of value) {
-        assert(item).is(...types);
+      for (var i = 0; i < value.length; i++) {
+        assert(value[i]).is(...types);
       }
     }
   });
@@ -257,7 +270,8 @@ function structure(definition) {
   var properties = Object.keys(definition);
   return assert.define('object with properties ' + properties.join(', '), function(value) {
     if (assert(value).is(Object)) {
-      for (var property of properties) {
+      for (var i = 0; i < properties.length; i++) {
+        var property = properties[i];
         assert(value[property]).is(definition[property]);
       }
     }
@@ -305,8 +319,8 @@ function assert(value) {
       // var errors = []
       var allErrors = [];
       var errors;
-
-      for (var type of types) {
+      for (var i = 0; i < types.length; i++) {
+        var type = types[i];
         errors = [];
 
         if (isType(value, type, errors)) {

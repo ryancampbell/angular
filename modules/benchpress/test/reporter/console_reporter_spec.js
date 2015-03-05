@@ -6,7 +6,7 @@ import { List, ListWrapper } from 'angular2/src/facade/collection';
 import {
   SampleState, Reporter, bind, Injector,
   ConsoleReporter, SampleDescription, MeasureValues
-} from 'benchpress/benchpress';
+} from 'benchpress/common';
 
 export function main() {
   describe('console reporter', () => {
@@ -29,7 +29,7 @@ export function main() {
       if (isPresent(columnWidth)) {
         ListWrapper.push(bindings, bind(ConsoleReporter.COLUMN_WIDTH).toValue(columnWidth));
       }
-      reporter = new Injector(bindings).get(Reporter);
+      reporter = new Injector(bindings).get(ConsoleReporter);
     }
 
     it('should print the sample id, description and table header', () => {
@@ -92,7 +92,7 @@ export function main() {
       })]);
       expect(log).toEqual([
         '======== | ========',
-        '4.00±25% | 7.50±20%'
+        '4.00+-25% | 7.50+-20%'
       ]);
     });
 

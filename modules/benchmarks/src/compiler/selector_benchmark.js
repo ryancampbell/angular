@@ -3,8 +3,10 @@ import {CssSelector} from "angular2/src/core/compiler/selector";
 import {StringWrapper, Math} from 'angular2/src/facade/lang';
 import {ListWrapper} from 'angular2/src/facade/collection';
 import {getIntParameter, bindAction} from 'angular2/src/test_lib/benchmark_util';
+import {BrowserDomAdapter} from 'angular2/src/dom/browser_adapter';
 
 export function main() {
+  BrowserDomAdapter.makeCurrent();
   var count = getIntParameter('selectors');
 
   var fixedMatcher;
@@ -40,7 +42,7 @@ export function main() {
   function match() {
     var matchCount = 0;
     for (var i=0; i<count; i++) {
-      fixedMatcher.match(fixedSelectors[i], (selected) => {
+      fixedMatcher.match(fixedSelectors[i], (selector, selected) => {
         matchCount += selected;
       });
     }

@@ -1,10 +1,12 @@
 import {Injector, bind, OpaqueToken} from 'angular2/di';
 import {Type, FIELD, isBlank, isPresent, BaseException, assertionsEnabled, print} from 'angular2/src/facade/lang';
-import {DOM, Element} from 'angular2/src/facade/dom';
+import {BrowserDomAdapter} from 'angular2/src/dom/browser_adapter';
+import {DOM} from 'angular2/src/dom/dom_adapter';
 import {Compiler, CompilerCache} from './compiler/compiler';
 import {ProtoView} from './compiler/view';
 import {Reflector, reflector} from 'angular2/src/reflection/reflection';
 import {Parser, Lexer, ChangeDetection, dynamicChangeDetection, jitChangeDetection} from 'angular2/change_detection';
+import {ExceptionHandler} from './exception_handler';
 import {TemplateLoader} from './compiler/template_loader';
 import {TemplateResolver} from './compiler/template_resolver';
 import {DirectiveMetadataReader} from './compiler/directive_metadata_reader';
@@ -15,25 +17,20 @@ import {LifeCycle} from 'angular2/src/core/life_cycle/life_cycle';
 import {ShadowDomStrategy, NativeShadowDomStrategy} from 'angular2/src/core/compiler/shadow_dom_strategy';
 import {XHR} from 'angular2/src/core/compiler/xhr/xhr';
 import {XHRImpl} from 'angular2/src/core/compiler/xhr/xhr_impl';
-import {EventManager} from 'angular2/src/core/events/event_manager';
+import {EventManager, DomEventsPlugin} from 'angular2/src/core/events/event_manager';
 import {HammerGesturesPlugin} from 'angular2/src/core/events/hammer_gestures';
 import {Binding} from 'angular2/src/di/binding';
+import {ComponentUrlMapper} from 'angular2/src/core/compiler/component_url_mapper';
+import {UrlResolver} from 'angular2/src/core/compiler/url_resolver';
+import {StyleUrlResolver} from 'angular2/src/core/compiler/style_url_resolver';
+import {StyleInliner} from 'angular2/src/core/compiler/style_inliner';
+import {CssProcessor} from 'angular2/src/core/compiler/css_processor';
 
 var _rootInjector: Injector;
 
 // Contains everything that is safe to share between applications.
 var _rootBindings = [
-  bind(Reflector).toValue(reflector),
-  bind(ChangeDetection).toValue(dynamicChangeDetection),
-  Compiler,
-  CompilerCache,
-  TemplateLoader,
-  TemplateResolver,
-  DirectiveMetadataReader,
-  Parser,
-  Lexer,
-  bind(ShadowDomStrategy).toValue(new NativeShadowDomStrategy()),
-  bind(XHR).toValue(new XHRImpl()),
+  bind(Reflector).toValue(reflector)
 ];
 
 export var appViewToken = new OpaqueToken('AppView');
@@ -82,11 +79,27 @@ function _injectorBindings(appComponentType): List<Binding> {
           [appViewToken]),
       bind(appComponentType).toFactory((rootView) => rootView.elementInjectors[0].getComponent(),
           [appViewToken]),
-      bind(LifeCycle).toFactory(() => new LifeCycle(null, assertionsEnabled()),[]),
+      bind(LifeCycle).toFactory((exceptionHandler) => new LifeCycle(exceptionHandler, null, assertionsEnabled()),[ExceptionHandler]),
       bind(EventManager).toFactory((zone) => {
-        var plugins = [new HammerGesturesPlugin()];
+        var plugins = [new HammerGesturesPlugin(), new DomEventsPlugin()];
         return new EventManager(plugins, zone);
       }, [VmTurnZone]),
+      bind(ShadowDomStrategy).toClass(NativeShadowDomStrategy),
+      Compiler,
+      CompilerCache,
+      TemplateResolver,
+      bind(ChangeDetection).toValue(dynamicChangeDetection),
+      TemplateLoader,
+      DirectiveMetadataReader,
+      Parser,
+      Lexer,
+      ExceptionHandler,
+      bind(XHR).toValue(new XHRImpl()),
+      ComponentUrlMapper,
+      UrlResolver,
+      StyleUrlResolver,
+      StyleInliner,
+      bind(CssProcessor).toFactory(() => new CssProcessor(null), []),
   ];
 }
 
@@ -107,6 +120,7 @@ function _createVmZone(givenReporter:Function): VmTurnZone {
 // Multiple calls to this method are allowed. Each application would only share
 // _rootInjector, which is not user-configurable by design, thus safe to share.
 export function bootstrap(appComponentType: Type, bindings: List<Binding>=null, givenBootstrapErrorReporter: Function=null): Promise {
+  BrowserDomAdapter.makeCurrent();
   var bootstrapProcess = PromiseWrapper.completer();
 
   var zone = _createVmZone(givenBootstrapErrorReporter);
@@ -123,7 +137,7 @@ export function bootstrap(appComponentType: Type, bindings: List<Binding>=null, 
         lc.registerWith(zone, rootView.changeDetector);
         lc.tick(); //the first tick that will bootstrap the app
 
-        bootstrapProcess.complete(appInjector);
+        bootstrapProcess.resolve(appInjector);
       },
 
       (err) => {

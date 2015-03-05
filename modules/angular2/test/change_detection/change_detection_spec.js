@@ -5,12 +5,11 @@ import {List, ListWrapper, MapWrapper, StringMapWrapper} from 'angular2/src/faca
 
 import {Parser} from 'angular2/src/change_detection/parser/parser';
 import {Lexer} from 'angular2/src/change_detection/parser/lexer';
-import {arrayChangesAsString, kvChangesAsString} from './util';
 
 import {ChangeDispatcher, DynamicChangeDetector, ChangeDetectionError, ContextWithVariableBindings,
-  PipeRegistry, NO_CHANGE,
-  CHECK_ALWAYS, CHECK_ONCE, CHECKED, DETACHED} from 'angular2/change_detection';
+  PipeRegistry, Pipe, NO_CHANGE, CHECK_ALWAYS, CHECK_ONCE, CHECKED, DETACHED} from 'angular2/change_detection';
 
+import {ChangeDetectionUtil} from 'angular2/src/change_detection/change_detection_util';
 
 import {JitProtoChangeDetector, DynamicProtoChangeDetector} from 'angular2/src/change_detection/proto_change_detector';
 
@@ -29,21 +28,18 @@ export function main() {
           return parser.parseBinding(exp, location);
         }
 
-        function createChangeDetector(memo:string, exp:string, context = null, formatters = null,
-                                      registry = null, structural = false) {
+        function createChangeDetector(memo:string, exp:string, context = null, registry = null) {
           var pcd = createProtoChangeDetector(registry);
-          pcd.addAst(ast(exp), memo, memo, structural);
-
+          pcd.addAst(ast(exp), memo, memo);
           var dispatcher = new TestDispatcher();
-          var cd = pcd.instantiate(dispatcher, formatters);
-          cd.setContext(context);
+          var cd = pcd.instantiate(dispatcher);
+          cd.hydrate(context);
 
           return {"changeDetector" : cd, "dispatcher" : dispatcher};
         }
 
-        function executeWatch(memo:string, exp:string, context = null, formatters = null,
-                              registry = null, content = false) {
-          var res = createChangeDetector(memo, exp, context, formatters, registry, content);
+        function executeWatch(memo:string, exp:string, context = null) {
+          var res = createChangeDetector(memo, exp, context);
           res["changeDetector"].detectChanges();
           return res["dispatcher"].log;
         }
@@ -179,82 +175,112 @@ export function main() {
             });
           });
 
-          it("should support formatters", () => {
-            var formatters = MapWrapper.createFromPairs([
-              ['uppercase', (v) => v.toUpperCase()],
-              ['wrap', (v, before, after) => `${before}${v}${after}`]]);
-            expect(executeWatch('str', '"aBc" | uppercase', null, formatters)).toEqual(['str=ABC']);
-            expect(executeWatch('str', '"b" | wrap:"a":"c"', null, formatters)).toEqual(['str=abc']);
-          });
-
           it("should support interpolation", () => {
             var parser = new Parser(new Lexer());
             var pcd = createProtoChangeDetector();
             var ast = parser.parseInterpolation("B{{a}}A", "location");
-            pcd.addAst(ast, "memo", "memo", false);
+            pcd.addAst(ast, "memo", "memo");
 
             var dispatcher = new TestDispatcher();
-            var cd = pcd.instantiate(dispatcher, MapWrapper.create());
-            cd.setContext(new TestData("value"));
+            var cd = pcd.instantiate(dispatcher);
+            cd.hydrate(new TestData("value"));
 
             cd.detectChanges();
 
             expect(dispatcher.log).toEqual(["memo=BvalueA"]);
           });
+ 
+          describe("change notification", () => {
+            describe("simple checks", () => {
+              it("should pass a change record to the dispatcher", () => {
+                var person = new Person('bob');
+                var c = createChangeDetector('name', 'name', person);
+                var cd = c["changeDetector"];
+                var dispatcher = c["dispatcher"];
 
-          describe("group changes", () => {
-            it("should notify the dispatcher when a group of records changes", () => {
-              var pcd = createProtoChangeDetector();
-              pcd.addAst(ast("1 + 2"), "memo", "1");
-              pcd.addAst(ast("10 + 20"), "memo", "1");
-              pcd.addAst(ast("100 + 200"), "memo2", "2");
+                cd.detectChanges();
 
-              var dispatcher = new TestDispatcher();
-              var cd = pcd.instantiate(dispatcher, null);
+                var changeRecord = dispatcher.changeRecords[0][0];
 
-              cd.detectChanges();
-
-              expect(dispatcher.loggedValues).toEqual([[3, 30], [300]]);
+                expect(changeRecord.bindingMemento).toEqual('name');
+                expect(changeRecord.change.currentValue).toEqual('bob');
+                expect(changeRecord.change.previousValue).toEqual(ChangeDetectionUtil.unitialized());
+              });
             });
 
-            it("should notify the dispatcher before switching to the next group", () => {
-              var pcd = createProtoChangeDetector();
-              pcd.addAst(ast("a()"), "a", "1");
-              pcd.addAst(ast("b()"), "b", "2");
-              pcd.addAst(ast("c()"), "c", "2");
+            describe("pipes", () => {
+              it("should pass a change record to the dispatcher", () => {
+                var registry = new FakePipeRegistry('pipe', () => new CountingPipe());
 
-              var dispatcher = new TestDispatcher();
-              var cd = pcd.instantiate(dispatcher, null);
+                var person = new Person('bob');
+                var c = createChangeDetector('name', 'name | pipe', person, registry);
+                var cd = c["changeDetector"];
+                var dispatcher = c["dispatcher"];
 
-              var tr = new TestRecord();
-              tr.a = () => {
-                dispatcher.logValue('InvokeA');
-                return 'a'
-              };
-              tr.b = () => {
-                dispatcher.logValue('InvokeB');
-                return 'b'
-              };
-              tr.c = () => {
-                dispatcher.logValue('InvokeC');
-                return 'c'
-              };
-              cd.setContext(tr);
+                cd.detectChanges();
 
-              cd.detectChanges();
+                var changeRecord = dispatcher.changeRecords[0][0];
 
-              expect(dispatcher.loggedValues).toEqual(['InvokeA', ['a'], 'InvokeB', 'InvokeC', ['b', 'c']]);
+                expect(changeRecord.bindingMemento).toEqual('name');
+                expect(changeRecord.change.currentValue).toEqual('bob state:0');
+                expect(changeRecord.change.previousValue).toEqual(ChangeDetectionUtil.unitialized());
+              });
+            });
+
+            describe("group changes", () => {
+              it("should notify the dispatcher when a group of records changes", () => {
+                var pcd = createProtoChangeDetector();
+                pcd.addAst(ast("1 + 2"), "memo", "1");
+                pcd.addAst(ast("10 + 20"), "memo", "1");
+                pcd.addAst(ast("100 + 200"), "memo2", "2");
+
+                var dispatcher = new TestDispatcher();
+                var cd = pcd.instantiate(dispatcher);
+
+                cd.detectChanges();
+
+                expect(dispatcher.loggedValues).toEqual([[3, 30], [300]]);
+              });
+
+              it("should notify the dispatcher before switching to the next group", () => {
+                var pcd = createProtoChangeDetector();
+                pcd.addAst(ast("a()"), "a", "1");
+                pcd.addAst(ast("b()"), "b", "2");
+                pcd.addAst(ast("c()"), "c", "2");
+
+                var dispatcher = new TestDispatcher();
+                var cd = pcd.instantiate(dispatcher);
+
+                var tr = new TestRecord();
+                tr.a = () => {
+                  dispatcher.logValue('InvokeA');
+                  return 'a'
+                };
+                tr.b = () => {
+                  dispatcher.logValue('InvokeB');
+                  return 'b'
+                };
+                tr.c = () => {
+                  dispatcher.logValue('InvokeC');
+                  return 'c'
+                };
+                cd.hydrate(tr);
+
+                cd.detectChanges();
+
+                expect(dispatcher.loggedValues).toEqual(['InvokeA', ['a'], 'InvokeB', 'InvokeC', ['b', 'c']]);
+              });
             });
           });
-
+          
           describe("enforce no new changes", () => {
             it("should throw when a record gets changed after it has been checked", () => {
               var pcd = createProtoChangeDetector();
               pcd.addAst(ast("a"), "a", 1);
 
               var dispatcher = new TestDispatcher();
-              var cd = pcd.instantiate(dispatcher, null);
-              cd.setContext(new TestData('value'));
+              var cd = pcd.instantiate(dispatcher);
+              cd.hydrate(new TestData('value'));
 
               expect(() => {
                 cd.checkNoChanges();
@@ -268,8 +294,8 @@ export function main() {
               var pcd = createProtoChangeDetector();
               pcd.addAst(ast('invalidProp', 'someComponent'), "a", 1);
 
-              var cd = pcd.instantiate(new TestDispatcher(), null);
-              cd.setContext(null);
+              var cd = pcd.instantiate(new TestDispatcher());
+              cd.hydrate(null);
 
               try {
                 cd.detectChanges();
@@ -288,6 +314,14 @@ export function main() {
                 MapWrapper.createFromPairs([["key", "value"]]));
 
               expect(executeWatch('key', 'key', locals))
+                .toEqual(['key=value']);
+            });
+
+            it('should invoke a function from ContextWithVariableBindings', () => {
+              var locals = new ContextWithVariableBindings(null,
+                MapWrapper.createFromPairs([["key", () => "value"]]));
+
+              expect(executeWatch('key', 'key()', locals))
                 .toEqual(['key=value']);
             });
 
@@ -315,10 +349,10 @@ export function main() {
 
             beforeEach(() => {
               var protoParent = createProtoChangeDetector();
-              parent = protoParent.instantiate(null, null);
+              parent = protoParent.instantiate(null);
 
               var protoChild = createProtoChangeDetector();
-              child = protoChild.instantiate(null, null);
+              child = protoChild.instantiate(null);
             });
 
             it("should add children", () => {
@@ -334,25 +368,6 @@ export function main() {
 
               expect(parent.children).toEqual([]);
             });
-          });
-        });
-
-        describe("optimizations", () => {
-          it("should not rerun formatters when args did not change", () => {
-            var count = 0;
-            var formatters = MapWrapper.createFromPairs([
-              ['count', (v) => {count ++; "value"}]]);
-
-            var c = createChangeDetector('a', 'a | count', new TestData(null), formatters);
-            var cd = c["changeDetector"];
-
-            cd.detectChanges();
-
-            expect(count).toEqual(1);
-
-            cd.detectChanges();
-
-            expect(count).toEqual(1);
           });
         });
 
@@ -380,7 +395,7 @@ export function main() {
           });
 
           it("should change CHECK_ONCE to CHECKED", () => {
-            var cd = createProtoChangeDetector().instantiate(null, null);
+            var cd = createProtoChangeDetector().instantiate(null);
             cd.mode = CHECK_ONCE;
 
             cd.detectChanges();
@@ -389,7 +404,7 @@ export function main() {
           });
 
           it("should not change the CHECK_ALWAYS", () => {
-            var cd = createProtoChangeDetector().instantiate(null, null);
+            var cd = createProtoChangeDetector().instantiate(null);
             cd.mode = CHECK_ALWAYS;
 
             cd.detectChanges();
@@ -400,7 +415,7 @@ export function main() {
 
         describe("markPathToRootAsCheckOnce", () => {
           function changeDetector(mode, parent) {
-            var cd = createProtoChangeDetector().instantiate(null, null);
+            var cd = createProtoChangeDetector().instantiate(null);
             cd.mode = mode;
             if (isPresent(parent)) parent.addChild(cd);
             return cd;
@@ -427,12 +442,41 @@ export function main() {
           });
         });
 
+        describe("hydration", () => {
+          it("should be able to rehydrate a change detector", () => {
+            var c  = createChangeDetector("memo", "name");
+            var cd = c["changeDetector"];
+
+            cd.hydrate("some context");
+            expect(cd.hydrated()).toBe(true);
+
+            cd.dehydrate();
+            expect(cd.hydrated()).toBe(false);
+
+            cd.hydrate("other context");
+            expect(cd.hydrated()).toBe(true);
+          });
+
+          it("should destroy all active pipes during dehyration", () => {
+            var pipe = new OncePipe();
+            var registry = new FakePipeRegistry('pipe', () => pipe);
+            var c  = createChangeDetector("memo", "name | pipe", new Person('bob'), registry);
+            var cd = c["changeDetector"];
+
+            cd.detectChanges();
+
+            cd.dehydrate();
+
+            expect(pipe.destroyCalled).toBe(true);
+          });
+        });
+
         describe("pipes", () => {
           it("should support pipes", () => {
-            var registry = new FakePipeRegistry(() => new CountingPipe());
+            var registry = new FakePipeRegistry('pipe', () => new CountingPipe());
             var ctx = new Person("Megatron");
 
-            var c  = createChangeDetector("memo", "name", ctx, null, registry, true);
+            var c  = createChangeDetector("memo", "name | pipe", ctx, registry);
             var cd = c["changeDetector"];
             var dispatcher = c["dispatcher"];
 
@@ -447,10 +491,10 @@ export function main() {
           });
 
           it("should lookup pipes in the registry when the context is not supported", () => {
-            var registry = new FakePipeRegistry(() => new OncePipe());
+            var registry = new FakePipeRegistry('pipe', () => new OncePipe());
             var ctx = new Person("Megatron");
 
-            var c  = createChangeDetector("memo", "name", ctx, null, registry, true);
+            var c  = createChangeDetector("memo", "name | pipe", ctx, registry);
             var cd = c["changeDetector"];
 
             cd.detectChanges();
@@ -462,13 +506,28 @@ export function main() {
 
             expect(registry.numberOfLookups).toEqual(2);
           });
+
+          it("should invoke onDestroy on a pipe before switching to another one", () => {
+            var pipe = new OncePipe();
+            var registry = new FakePipeRegistry('pipe', () => pipe);
+            var ctx = new Person("Megatron");
+
+            var c  = createChangeDetector("memo", "name | pipe", ctx, registry);
+            var cd = c["changeDetector"];
+
+            cd.detectChanges();
+            ctx.name = "Optimus Prime";
+            cd.detectChanges();
+
+            expect(pipe.destroyCalled).toEqual(true);
+          });
         });
 
         it("should do nothing when returns NO_CHANGE", () => {
-          var registry = new FakePipeRegistry(() => new IdentityPipe())
+          var registry = new FakePipeRegistry('pipe', () => new IdentityPipe())
           var ctx = new Person("Megatron");
 
-          var c  = createChangeDetector("memo", "name", ctx, null, registry, true);
+          var c  = createChangeDetector("memo", "name | pipe", ctx, registry);
           var cd = c["changeDetector"];
           var dispatcher = c["dispatcher"];
 
@@ -487,10 +546,11 @@ export function main() {
   });
 }
 
-class CountingPipe {
+class CountingPipe extends Pipe {
   state:number;
 
   constructor() {
+    super();
     this.state = 0;
   }
 
@@ -503,14 +563,22 @@ class CountingPipe {
   }
 }
 
-class OncePipe {
+class OncePipe extends Pipe {
   called:boolean;
+  destroyCalled:boolean;
+
   constructor() {
+    super();
     this.called = false;;
+    this.destroyCalled = false;
   }
 
   supports(newValue) {
     return !this.called;
+  }
+
+  onDestroy() {
+    this.destroyCalled = true;
   }
 
   transform(value) {
@@ -519,7 +587,7 @@ class OncePipe {
   }
 }
 
-class IdentityPipe {
+class IdentityPipe extends Pipe {
   state:any;
 
   supports(newValue) {
@@ -538,15 +606,18 @@ class IdentityPipe {
 
 class FakePipeRegistry extends PipeRegistry {
   numberOfLookups:number;
+  pipeType:string;
   factory:Function;
 
-  constructor(factory) {
+  constructor(pipeType, factory) {
     super({});
+    this.pipeType = pipeType;
     this.factory = factory;
     this.numberOfLookups = 0;
   }
 
   get(type:string, obj) {
+    if (type != this.pipeType) return null;
     this.numberOfLookups ++;
     return this.factory();
   }
@@ -604,6 +675,7 @@ class TestData {
 class TestDispatcher extends ChangeDispatcher {
   log:List;
   loggedValues:List;
+  changeRecords:List;
   onChange:Function;
 
   constructor() {
@@ -617,21 +689,24 @@ class TestDispatcher extends ChangeDispatcher {
   clear() {
     this.log = ListWrapper.create();
     this.loggedValues = ListWrapper.create();
+    this.changeRecords = ListWrapper.create();
   }
 
   logValue(value) {
     ListWrapper.push(this.loggedValues, value);
   }
 
-  onRecordChange(group, updates:List) {
-    var value = updates[0].change.currentValue;
-    var memento = updates[0].bindingMemento;
+  onRecordChange(group, changeRecords:List) {
+    var value = changeRecords[0].change.currentValue;
+    var memento = changeRecords[0].bindingMemento;
     ListWrapper.push(this.log, memento + '=' + this._asString(value));
 
-    var values = ListWrapper.map(updates, (r) => r.change.currentValue);
+    var values = ListWrapper.map(changeRecords, (r) => r.change.currentValue);
     ListWrapper.push(this.loggedValues, values);
 
-    this.onChange(group, updates);
+    ListWrapper.push(this.changeRecords, changeRecords);
+
+    this.onChange(group, changeRecords);
   }
 
 

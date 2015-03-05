@@ -1,5 +1,5 @@
 import {List, ListWrapper} from 'angular2/src/facade/collection';
-import {DOM} from 'angular2/src/facade/dom';
+import {DOM} from 'angular2/src/dom/dom_adapter';
 import {isPresent} from 'angular2/src/facade/lang';
 
 export class Log {
@@ -39,5 +39,5 @@ export function dispatchEvent(element, eventType) {
 }
 
 export function el(html) {
-  return DOM.firstChild(DOM.createTemplate(html).content);
+  return DOM.firstChild(DOM.content(DOM.createTemplate(html)));
 }

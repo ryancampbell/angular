@@ -1,10 +1,11 @@
 import { PromiseWrapper, Promise } from 'angular2/src/facade/async';
-import { isPresent, isBlank, int, BaseException, StringWrapper } from 'angular2/src/facade/lang';
-import { ListWrapper } from 'angular2/src/facade/collection';
+import { isPresent, isBlank, int, BaseException, StringWrapper, Math } from 'angular2/src/facade/lang';
+import { ListWrapper, StringMap, StringMapWrapper } from 'angular2/src/facade/collection';
 import { bind, OpaqueToken } from 'angular2/di';
 
 import { WebDriverExtension } from '../web_driver_extension';
 import { Metric } from '../metric';
+import { Options } from '../sample_options';
 
 /**
  * A metric that reads out the performance log
@@ -19,24 +20,36 @@ export class PerflogMetric extends Metric {
   _remainingEvents:List;
   _measureCount:int;
   _setTimeout:Function;
+  _microIterations:int;
 
-  constructor(driverExtension:WebDriverExtension, setTimeout:Function) {
+  /**
+   * @param driverExtension
+   * @param setTimeout
+   * @param microIterations Number of iterations that run inside the browser by user code.
+   *                        Used for micro benchmarks.
+   **/
+  constructor(driverExtension:WebDriverExtension, setTimeout:Function, microIterations:int) {
     super();
     this._driverExtension = driverExtension;
     this._remainingEvents = [];
     this._measureCount = 0;
     this._setTimeout = setTimeout;
+    this._microIterations = microIterations;
   }
 
-  describe() {
-    return {
+  describe():StringMap {
+    var res = {
       'script': 'script execution time in ms',
       'render': 'render time in ms',
       'gcTime': 'gc time in ms',
-      'gcAmount': 'gc amount in bytes',
-      'gcTimeInScript': 'gc time during script execution in ms',
-      'gcAmountInScript': 'gc amount during script execution in bytes'
+      'gcAmount': 'gc amount in kbytes',
+      'majorGcTime': 'time of major gcs in ms',
+      'majorGcAmount': 'amount of major gcs in kbytes'
     };
+    if (this._microIterations > 0) {
+      res['scriptMicroAvg'] = 'average script time for a micro iteration';
+    }
+    return res;
   }
 
   beginMeasure():Promise {
@@ -50,12 +63,12 @@ export class PerflogMetric extends Metric {
       .then( (_) => this._readUntilEndMark(markName) );
   }
 
-  _readUntilEndMark(markName:string, loopCount:int = 0) {
+  _readUntilEndMark(markName:string, loopCount:int = 0, startEvent = null) {
+    if (loopCount > _MAX_RETRY_COUNT) {
+      throw new BaseException(`Tried too often to get the ending mark: ${loopCount}`);
+    }
     return this._driverExtension.readPerfLog().then( (events) => {
-      this._remainingEvents = ListWrapper.concat(this._remainingEvents, events);
-      if (loopCount > _MAX_RETRY_COUNT) {
-        throw new BaseException(`Tried too often to get the ending mark: ${loopCount}`);
-      }
+      this._addEvents(events);
       var result = this._aggregateEvents(
         this._remainingEvents, markName
       );
@@ -65,11 +78,44 @@ export class PerflogMetric extends Metric {
       }
       var completer = PromiseWrapper.completer();
       this._setTimeout(
-        () => completer.complete(this._readUntilEndMark(markName, loopCount+1)),
+        () => completer.resolve(this._readUntilEndMark(markName, loopCount+1)),
         100
       );
       return completer.promise;
     });
+  }
+
+  _addEvents(events) {
+    var needSort = false;
+    ListWrapper.forEach(events, (event) => {
+      if (StringWrapper.equals(event['ph'], 'X')) {
+        needSort = true;
+        var startEvent = {};
+        var endEvent = {};
+        StringMapWrapper.forEach(event, (value, prop) => {
+          startEvent[prop] = value;
+          endEvent[prop] = value;
+        });
+        startEvent['ph'] = 'B';
+        endEvent['ph'] = 'E';
+        endEvent['ts'] = startEvent['ts'] + startEvent['dur'];
+        ListWrapper.push(this._remainingEvents, startEvent);
+        ListWrapper.push(this._remainingEvents, endEvent);
+      } else {
+        ListWrapper.push(this._remainingEvents, event);
+      }
+    });
+    if (needSort) {
+      // Need to sort because of the ph==='X' events
+      ListWrapper.sort(this._remainingEvents, (a,b) => {
+        var diff = a['ts'] - b['ts'];
+        return diff > 0
+            ? 1
+            : diff < 0
+                ? -1
+                : 0;
+      });
+    }
   }
 
   _aggregateEvents(events, markName) {
@@ -78,53 +124,53 @@ export class PerflogMetric extends Metric {
       'render': 0,
       'gcTime': 0,
       'gcAmount': 0,
-      'gcTimeInScript': 0,
-      'gcAmountInScript': 0
+      'majorGcTime': 0,
+      'majorGcAmount': 0
     };
 
-    var startMarkFound = false;
-    var endMarkFound = false;
-    if (isBlank(markName)) {
-      startMarkFound = true;
-      endMarkFound = true;
-    }
+    var markStartEvent = null;
+    var markEndEvent = null;
+    var gcTimeInScript = 0;
 
     var intervalStarts = {};
     events.forEach( (event) => {
       var ph = event['ph'];
       var name = event['name'];
-      var ts = event['ts'];
-      var args = event['args'];
       if (StringWrapper.equals(ph, 'b') && StringWrapper.equals(name, markName)) {
-        startMarkFound = true;
+        markStartEvent = event;
       } else if (StringWrapper.equals(ph, 'e') && StringWrapper.equals(name, markName)) {
-        endMarkFound = true;
+        markEndEvent = event;
       }
-      if (startMarkFound && !endMarkFound) {
+      if (isPresent(markStartEvent) && isBlank(markEndEvent) && event['pid'] === markStartEvent['pid']) {
         if (StringWrapper.equals(ph, 'B')) {
-          intervalStarts[name] = ts;
+          intervalStarts[name] = event;
         } else if (StringWrapper.equals(ph, 'E') && isPresent(intervalStarts[name])) {
-          var diff = ts - intervalStarts[name];
+          var startEvent = intervalStarts[name];
+          var duration = event['ts'] - startEvent['ts'];
           intervalStarts[name] = null;
           if (StringWrapper.equals(name, 'gc')) {
-            result['gcTime'] += diff;
-            var gcAmount = 0;
-            if (isPresent(args)) {
-              gcAmount = args['amount'];
+            var amount = (startEvent['args']['usedHeapSize'] - event['args']['usedHeapSize']) / 1000;
+            result['gcTime'] += duration;
+            result['gcAmount'] += amount;
+            var majorGc = event['args']['majorGc'];
+            if (isPresent(majorGc) && majorGc) {
+              result['majorGcTime'] += duration;
+              result['majorGcAmount'] += amount;
             }
-            result['gcAmount'] += gcAmount;
             if (isPresent(intervalStarts['script'])) {
-              result['gcTimeInScript'] += diff;
-              result['gcAmountInScript'] += gcAmount;
+              gcTimeInScript += duration;
             }
-          } else {
-            result[name] += diff;
+          } else if (StringWrapper.equals(name, 'script') || StringWrapper.equals(name, 'render')) {
+            result[name] += duration;
           }
         }
       }
     });
-    result['script'] -= result['gcTimeInScript'];
-    return startMarkFound && endMarkFound ? result : null;
+    result['script'] -= gcTimeInScript;
+    if (this._microIterations > 0) {
+      result['scriptMicroAvg'] = result['script'] / this._microIterations;
+    }
+    return isPresent(markStartEvent) && isPresent(markEndEvent) ? result : null;
   }
 
   _markName(index) {
@@ -136,9 +182,10 @@ var _MAX_RETRY_COUNT = 20;
 var _MARK_NAME_PREFIX = 'benchpress';
 var _SET_TIMEOUT = new OpaqueToken('PerflogMetric.setTimeout');
 var _BINDINGS = [
-  bind(Metric).toFactory(
-    (driverExtension, setTimeout) => new PerflogMetric(driverExtension, setTimeout),
-    [WebDriverExtension, _SET_TIMEOUT]
+  bind(PerflogMetric).toFactory(
+    (driverExtension, setTimeout, microIterations) => new PerflogMetric(driverExtension, setTimeout, microIterations),
+    [WebDriverExtension, _SET_TIMEOUT, Options.MICRO_ITERATIONS]
   ),
-  bind(_SET_TIMEOUT).toValue( (fn, millis) => PromiseWrapper.setTimeout(fn, millis) )
+  bind(_SET_TIMEOUT).toValue( (fn, millis) => PromiseWrapper.setTimeout(fn, millis) ),
+  bind(Options.MICRO_ITERATIONS).toValue(0)
 ];

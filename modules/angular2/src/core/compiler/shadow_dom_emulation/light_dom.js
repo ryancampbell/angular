@@ -1,4 +1,4 @@
-import {Element, Node, DOM} from 'angular2/src/facade/dom';
+import {DOM} from 'angular2/src/dom/dom_adapter';
 import {List, ListWrapper} from 'angular2/src/facade/collection';
 import {isBlank, isPresent} from 'angular2/src/facade/lang';
 
@@ -12,7 +12,7 @@ export class DestinationLightDom {}
 
 
 class _Root {
-  node:Node;
+  node;
   injector:ElementInjector;
 
   constructor(node, injector) {
@@ -29,10 +29,10 @@ export class LightDom {
   // The shadow DOM
   shadowDomView:View;
   // The nodes of the light DOM
-  nodes:List<Node>;
+  nodes:List;
   roots:List<_Root>;
 
-  constructor(lightDomView:View, shadowDomView:View, element:Element) {
+  constructor(lightDomView:View, shadowDomView:View, element) {
     this.lightDomView = lightDomView;
     this.shadowDomView = shadowDomView;
     this.nodes = DOM.childNodesAsList(element);
@@ -105,14 +105,15 @@ export class LightDom {
 
     var viewInj = this.lightDomView.elementInjectors;
     this.roots = ListWrapper.map(this.nodes, (n) =>
-      new _Root(n, ListWrapper.find(viewInj, (inj) => inj.forElement(n))));
+      new _Root(n, ListWrapper.find(viewInj,
+        (inj) => isPresent(inj) ? inj.forElement(n) : false)));
 
     return this.roots;
   }
 }
 
 // Projects the light DOM into the shadow DOM
-function redistributeNodes(contents:List<Content>, nodes:List<Node>) {
+function redistributeNodes(contents:List<Content>, nodes:List) {
   for (var i = 0; i < contents.length; ++i) {
     var content = contents[i];
     var select = content.select;

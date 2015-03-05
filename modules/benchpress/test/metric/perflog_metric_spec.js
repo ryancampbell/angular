@@ -2,22 +2,28 @@ import {ddescribe, describe, it, iit, xit, expect, beforeEach, afterEach} from '
 
 import { List, ListWrapper } from 'angular2/src/facade/collection';
 import { PromiseWrapper, Promise } from 'angular2/src/facade/async';
+import { isPresent } from 'angular2/src/facade/lang';
 
-import { Metric, PerflogMetric, WebDriverExtension, bind, Injector } from 'benchpress/benchpress';
+import { Metric, PerflogMetric, WebDriverExtension, bind, Injector, Options } from 'benchpress/common';
+
+import { TraceEventFactory } from '../trace_event_factory';
 
 export function main() {
   var commandLog;
+  var eventFactory = new TraceEventFactory('timeline', 'pid0');
 
-  function createMetric(perfLogs) {
+  function createMetric(perfLogs, microIterations = 0) {
     commandLog = [];
-    return new Injector([
+    var bindings = [
       PerflogMetric.BINDINGS,
       bind(PerflogMetric.SET_TIMEOUT).toValue( (fn, millis) => {
         ListWrapper.push(commandLog, ['setTimeout', millis]);
         fn();
       }),
-      bind(WebDriverExtension).toValue(new MockDriverExtension(perfLogs, commandLog))
-    ]).get(Metric);
+      bind(WebDriverExtension).toValue(new MockDriverExtension(perfLogs, commandLog)),
+      bind(Options.MICRO_ITERATIONS).toValue(microIterations)
+    ];
+    return new Injector(bindings).get(PerflogMetric);
   }
 
   describe('perflog metric', () => {
@@ -44,10 +50,10 @@ export function main() {
       it('should mark and aggregate events in between the marks', (done) => {
         var events = [
           [
-            markStartEvent('benchpress0'),
-            startEvent('script', 4),
-            endEvent('script', 6),
-            markEndEvent('benchpress0')
+            eventFactory.markStart('benchpress0', 0),
+            eventFactory.start('script', 4),
+            eventFactory.end('script', 6),
+            eventFactory.markEnd('benchpress0', 10)
           ]
         ];
         var metric = createMetric(events);
@@ -68,11 +74,11 @@ export function main() {
       it('should restart timing', (done) => {
         var events = [
           [
-            markStartEvent('benchpress0'),
-            markEndEvent('benchpress0'),
-            markStartEvent('benchpress1'),
+            eventFactory.markStart('benchpress0', 0),
+            eventFactory.markEnd('benchpress0', 1),
+            eventFactory.markStart('benchpress1', 2),
           ], [
-            markEndEvent('benchpress1')
+            eventFactory.markEnd('benchpress1', 3)
           ]
         ];
         var metric = createMetric(events);
@@ -94,9 +100,9 @@ export function main() {
 
       it('should loop and aggregate until the end mark is present', (done) => {
         var events = [
-          [ markStartEvent('benchpress0'), startEvent('script', 1) ],
-          [ endEvent('script', 2) ],
-          [ startEvent('script', 3), endEvent('script', 5), markEndEvent('benchpress0') ]
+          [ eventFactory.markStart('benchpress0', 0), eventFactory.start('script', 1) ],
+          [ eventFactory.end('script', 2) ],
+          [ eventFactory.start('script', 3), eventFactory.end('script', 5), eventFactory.markEnd('benchpress0', 10) ]
         ];
         var metric = createMetric(events);
         metric.beginMeasure()
@@ -119,9 +125,9 @@ export function main() {
 
       it('should store events after the end mark for the next call', (done) => {
         var events = [
-          [ markStartEvent('benchpress0'), markEndEvent('benchpress0'), markStartEvent('benchpress1'),
-            startEvent('script', 1), endEvent('script', 2) ],
-          [ startEvent('script', 3), endEvent('script', 5), markEndEvent('benchpress1') ]
+          [ eventFactory.markStart('benchpress0', 0), eventFactory.markEnd('benchpress0', 1), eventFactory.markStart('benchpress1', 1),
+            eventFactory.start('script', 1), eventFactory.end('script', 2) ],
+          [ eventFactory.start('script', 3), eventFactory.end('script', 5), eventFactory.markEnd('benchpress1', 6) ]
         ];
         var metric = createMetric(events);
         metric.beginMeasure()
@@ -148,10 +154,10 @@ export function main() {
 
     describe('aggregation', () => {
 
-      function aggregate(events) {
-        ListWrapper.insert(events, 0, markStartEvent('benchpress0'));
-        ListWrapper.push(events, markEndEvent('benchpress0'));
-        var metric = createMetric([events]);
+      function aggregate(events, microIterations = 0) {
+        ListWrapper.insert(events, 0, eventFactory.markStart('benchpress0', 0));
+        ListWrapper.push(events, eventFactory.markEnd('benchpress0', 10));
+        var metric = createMetric([events], microIterations);
         return metric
           .beginMeasure().then( (_) => metric.endMeasure(false) );
       }
@@ -159,8 +165,8 @@ export function main() {
 
       it('should report a single interval', (done) => {
         aggregate([
-          startEvent('script', 0),
-          endEvent('script', 5)
+          eventFactory.start('script', 0),
+          eventFactory.end('script', 5)
         ]).then((data) => {
           expect(data['script']).toBe(5);
           done();
@@ -169,10 +175,10 @@ export function main() {
 
       it('should sum up multiple intervals', (done) => {
         aggregate([
-          startEvent('script', 0),
-          endEvent('script', 5),
-          startEvent('script', 10),
-          endEvent('script', 17)
+          eventFactory.start('script', 0),
+          eventFactory.end('script', 5),
+          eventFactory.start('script', 10),
+          eventFactory.end('script', 17)
         ]).then((data) => {
           expect(data['script']).toBe(12);
           done();
@@ -181,7 +187,7 @@ export function main() {
 
       it('should ignore not started intervals', (done) => {
         aggregate([
-          endEvent('script', 10)
+          eventFactory.end('script', 10)
         ]).then((data) => {
           expect(data['script']).toBe(0);
           done();
@@ -190,18 +196,36 @@ export function main() {
 
       it('should ignore not ended intervals', (done) => {
         aggregate([
-          startEvent('script', 10)
+          eventFactory.start('script', 10)
         ]).then((data) => {
           expect(data['script']).toBe(0);
           done();
         });
       });
 
-      ['script', 'gcTime', 'render'].forEach( (metricName) => {
+      it('should ignore events from different processed as the start mark', (done) => {
+        var otherProcessEventFactory = new TraceEventFactory('timeline', 'pid1');
+        var metric = createMetric([[
+          eventFactory.markStart('benchpress0', 0),
+          eventFactory.start('script', 0, null),
+          eventFactory.end('script', 5, null),
+          otherProcessEventFactory.start('script', 10, null),
+          otherProcessEventFactory.end('script', 17, null),
+          eventFactory.markEnd('benchpress0', 20)
+        ]]);
+        metric.beginMeasure()
+          .then( (_) => metric.endMeasure(false) )
+          .then((data) => {
+            expect(data['script']).toBe(5);
+            done();
+          });
+      });
+
+      ['script', 'render'].forEach( (metricName) => {
         it(`should support ${metricName} metric`, (done) => {
           aggregate([
-            startEvent(metricName, 0),
-            endEvent(metricName, 5)
+            eventFactory.start(metricName, 0),
+            eventFactory.end(metricName, 5)
           ]).then((data) => {
             expect(data[metricName]).toBe(5);
             done();
@@ -209,52 +233,63 @@ export function main() {
         });
       });
 
-      it('should support gcAmount metric', (done) => {
+      it('should support gcTime/gcAmount metric', (done) => {
         aggregate([
-          startEvent('gc', 0),
-          endEvent('gc', 5, {'amount': 10})
+          eventFactory.start('gc', 0, {'usedHeapSize': 2500}),
+          eventFactory.end('gc', 5, {'usedHeapSize': 1000})
         ]).then((data) => {
-          expect(data['gcAmount']).toBe(10);
+          expect(data['gcTime']).toBe(5);
+          expect(data['gcAmount']).toBe(1.5);
+          expect(data['majorGcTime']).toBe(0);
+          expect(data['majorGcAmount']).toBe(0);
+          done();
+        });
+      });
+
+      it('should support majorGcTime/majorGcAmount metric', (done) => {
+        aggregate([
+          eventFactory.start('gc', 0, {'usedHeapSize': 2500}),
+          eventFactory.end('gc', 5, {'usedHeapSize': 1000, 'majorGc': true})
+        ]).then((data) => {
+          expect(data['gcTime']).toBe(5);
+          expect(data['gcAmount']).toBe(1.5);
+          expect(data['majorGcTime']).toBe(5);
+          expect(data['majorGcAmount']).toBe(1.5);
           done();
         });
       });
 
       it('should subtract gcTime in script from script time', (done) => {
         aggregate([
-          startEvent('script', 0),
-          startEvent('gc', 1),
-          endEvent('gc', 4, {'amount': 10}),
-          endEvent('script', 5)
+          eventFactory.start('script', 0),
+          eventFactory.start('gc', 1, {'usedHeapSize': 1000}),
+          eventFactory.end('gc', 4, {'usedHeapSize': 0}),
+          eventFactory.end('script', 5)
         ]).then((data) => {
           expect(data['script']).toBe(2);
           done();
         });
       });
 
-      describe('gcTimeInScript / gcAmountInScript', () => {
+      describe('microIterations', () => {
 
-        it('should use gc during script execution', (done) => {
+        it('should not report scriptMicroAvg if microIterations = 0', (done) => {
           aggregate([
-            startEvent('script', 0),
-            startEvent('gc', 1),
-            endEvent('gc', 4, {'amount': 10}),
-            endEvent('script', 5)
-          ]).then((data) => {
-            expect(data['gcTimeInScript']).toBe(3);
-            expect(data['gcAmountInScript']).toBe(10);
+            eventFactory.start('script', 0),
+            eventFactory.end('script', 5)
+          ], 0).then((data) => {
+            expect(isPresent(data['scriptMicroAvg'])).toBe(false);
             done();
           });
         });
 
-        it('should ignore gc outside of script execution', (done) => {
+        it('should report scriptMicroAvg', (done) => {
           aggregate([
-            startEvent('gc', 1),
-            endEvent('gc', 4, {'amount': 10}),
-            startEvent('script', 0),
-            endEvent('script', 5)
-          ]).then((data) => {
-            expect(data['gcTimeInScript']).toBe(0);
-            expect(data['gcAmountInScript']).toBe(0);
+            eventFactory.start('script', 0),
+            eventFactory.end('script', 5)
+          ], 4).then((data) => {
+            expect(data['script']).toBe(5);
+            expect(data['scriptMicroAvg']).toBe(5/4);
             done();
           });
         });
@@ -264,37 +299,6 @@ export function main() {
     });
 
   });
-}
-
-function markStartEvent(type) {
-  return {
-    'name': type,
-    'ph': 'b'
-  }
-}
-
-function markEndEvent(type) {
-  return {
-    'name': type,
-    'ph': 'e'
-  }
-}
-
-function startEvent(type, time) {
-  return {
-    'name': type,
-    'ts': time,
-    'ph': 'B'
-  }
-}
-
-function endEvent(type, time, args = null) {
-  return {
-    'name': type,
-    'ts': time,
-    'ph': 'E',
-    'args': args
-  }
 }
 
 class MockDriverExtension extends WebDriverExtension {

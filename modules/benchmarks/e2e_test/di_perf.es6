@@ -1,4 +1,4 @@
-var perfUtil = require('angular2/e2e_test/perf_util');
+var perfUtil = require('angular2/src/test_lib/perf_util');
 
 describe('ng2 di benchmark', function () {
 
@@ -13,7 +13,8 @@ describe('ng2 di benchmark', function () {
       id: 'ng2.di.getByToken',
       params: [{
         name: 'iterations', value: 20000, scale: 'linear'
-      }]
+      }],
+      microIterations: 20000
     }).then(done, done.fail);
   });
 
@@ -22,9 +23,7 @@ describe('ng2 di benchmark', function () {
       url: URL,
       buttons: ['#getByKey'],
       id: 'ng2.di.getByKey',
-      params: [{
-        name: 'iterations', value: 20000, scale: 'linear'
-      }]
+      microIterations: 20000
     }).then(done, done.fail);
   });
 
@@ -33,9 +32,7 @@ describe('ng2 di benchmark', function () {
       url: URL,
       buttons: ['#getChild'],
       id: 'ng2.di.getChild',
-      params: [{
-        name: 'iterations', value: 20000, scale: 'linear'
-      }]
+      microIterations: 20000
     }).then(done, done.fail);
   });
 
@@ -44,9 +41,7 @@ describe('ng2 di benchmark', function () {
       url: URL,
       buttons: ['#instantiate'],
       id: 'ng2.di.instantiate',
-      params: [{
-        name: 'iterations', value: 10000, scale: 'linear'
-      }]
+      microIterations: 10000
     }).then(done, done.fail);
   });
 
